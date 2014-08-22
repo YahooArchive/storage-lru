@@ -665,6 +665,4 @@ StorageLRU.prototype.purge = function (spaceNeeded, callback) {
     }
 };
 
-if (module) {
-    module.exports = StorageLRU;
-}
+module.exports = StorageLRU;
