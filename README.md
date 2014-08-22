@@ -1,6 +1,8 @@
-# StorageLRU [![Build Status](https://travis-ci.org/yahoo/storage-lru.svg?branch=master)](https://travis-ci.org/yahoo/storage-lru) [![Dependency Status](https://david-dm.org/yahoo/storage-lru.svg)](https://david-dm.org/yahoo/storage-lru)
+# StorageLRU [![Build Status](https://travis-ci.org/yahoo/storage-lru.svg?branch=master)](https://travis-ci.org/yahoo/storage-lru) [![Dependency Status](https://david-dm.org/yahoo/storage-lru.svg)](https://david-dm.org/yahoo/storage-lru) [![Coverage Status](https://coveralls.io/repos/yahoo/storage-lru/badge.png?branch=cover)](https://coveralls.io/r/yahoo/storage-lru?branch=cover)
 
 StorageLRU is a LRU implementation that can be used with local storage, or other storage mechanisms that support a similar interface.
+
+**Note:** This library is written in CommonJS style.  To use it in browser, please use tools like [Browserify](http://browserify.org/) and [Webpack](http://webpack.github.io/).
 
 ## Features
 
