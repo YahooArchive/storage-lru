@@ -2,6 +2,8 @@
 
 StorageLRU is a LRU implementation that can be used with local storage, or other storage mechanisms that support a similar interface.
 
+**Note:** This library is written in CommonJS style.  To use it in browser, please use tools like [Browserify](http://browserify.org/) and [Webpack](http://webpack.github.io/).
+
 ## Features
 
 ### Pluggable Underline Storage
