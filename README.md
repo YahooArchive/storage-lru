@@ -156,7 +156,8 @@ stats = lru.stats({du: true});
 
 
 ## Usage
-```
+
+```js
 var lru = new StorageLRU(localStorage, {
     purgeFactor: 0.5,  // this controls amount of extra space to purge.
     purgedFn: function (purgedKeys) {
