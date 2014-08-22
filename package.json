@@ -1,19 +1,37 @@
 {
   "name": "storage-lru",
-  "version": "0.0.0",
-  "description": "A LRU cache to be used with pluggable storage mechanism",
+  "version": "0.0.1",
+  "description": "An LRU implementation that can be used with local storage, or other storage mechanisms that support a similar interface.",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/lingyan/storage-lru.git"
+    "url": "git://github.com/yahoo/storage-lru.git"
   },
-  "author": "lingyan <lingyan.zhu@gmail.com>",
-  "license": "BSD",
-  "bugs": {
-    "url": "https://github.com/lingyan/storage-lru/issues"
+  "scripts": {
+    "cover": "node node_modules/istanbul/lib/cli.js cover --dir artifacts -- ./node_modules/mocha/bin/_mocha tests/unit/ --recursive --reporter spec",
+    "lint": "jshint lib tests",
+    "test": "mocha tests/unit/ --recursive --reporter spec"
   },
-  "homepage": "https://github.com/lingyan/storage-lru"
+  "author": "Lingyan Zhu <lingyan@yahoo-inc.com",
+  "licenses": [
+    {
+      "type": "BSD",
+      "url": "https://github.com/yahoo/storage-lru/blob/master/LICENSE.md"
+    }
+  ],
+  "devDependencies": {
+    "chai": "^1.9.1",
+    "istanbul": "^0.2.10",
+    "jshint": "^2.5.1",
+    "mocha": "^1.20.0",
+    "precommit-hook": "^1.0.2"
+  },
+  "jshintConfig": {
+    "node": true
+  },
+  "keywords": [
+    "cache",
+    "localstorage",
+    "lru"
+  ]
 }
