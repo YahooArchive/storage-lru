@@ -9,7 +9,10 @@ function StorageMock(mockData) {
 }
 
 StorageMock.prototype.getItem = function (key) {
-    return this.data[key] || null;
+    if (this.data.hasOwnProperty(key)) {
+        return this.data[key];
+    }
+    return null;
 };
 
 StorageMock.prototype.setItem = function (key, value) {
