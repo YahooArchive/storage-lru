@@ -180,7 +180,7 @@ lru.setItem('fooJSON', {foo: 'bar'}, {json: true}, function (err) {
     }
 });
 
-lru.getItem('foo', function (err, value) {
+lru.getItem('foo', {json: false}, function (err, value) {
     if (err) {
         // something went wrong, for example, can't deserialize
         console.log('Failed to fetch item: err=', err);
