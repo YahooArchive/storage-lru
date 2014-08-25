@@ -470,31 +470,36 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
         self._meta.update(prefixedKey, meta);
     } catch (e) {
         if (self.numItems() === 0) {
-            // if numItems is 0, private mode is on or storage is disabled
+            // if numItems is 0, private mode is on or storage is disabled.
+            // callback with error and return
             self._markAsDisabled();
             callback && callback(cloneError(ERR_DISABLED));
-        } else {
-            // try purging
-            var spaceNeeded = serializedValue.length;
-            self.purge(spaceNeeded, function purgeCallback(err) {
-                if (err) {
-                    // not enough space purged
-                    callback && callback(cloneError(ERR_NOTENOUGHSPACE));
-                    return;
-                }
-                // purged enough space, now try to save again
-                try {
-                    self._storage.setItem(prefixedKey, serializedValue);
-                    self._meta.update(prefixedKey, meta);
-                } catch(errAfterPurge) {
-                    callback && callback(cloneError(ERR_NOTENOUGHSPACE));
-                    return;
-                }
-                callback && callback();
-            });
+            return;
         }
+
+        // purge and save again
+        var spaceNeeded = serializedValue.length;
+        self.purge(spaceNeeded, function purgeCallback(err) {
+            if (err) {
+                // not enough space purged
+                callback && callback(cloneError(ERR_NOTENOUGHSPACE));
+                return;
+            }
+            // purged enough space, now try to save again
+            try {
+                self._storage.setItem(prefixedKey, serializedValue);
+                self._meta.update(prefixedKey, meta);
+            } catch(errAfterPurge) {
+                callback && callback(cloneError(ERR_NOTENOUGHSPACE));
+                return;
+            }
+            // setItem succeeded after the purge
+            callback && callback();
+        });
         return;
     }
+
+    // setItem succeeded (did not need purge)
     callback && callback();
 };
 
