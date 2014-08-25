@@ -10,6 +10,8 @@ module.exports = function (keyPrefix, records) {
         var key = record.key || i;
         if (record.bad) {
             items[keyPrefix + key] = 'noMetaJunk' + record.value;
+        } else if (record.key === 'empty') {
+            items[keyPrefix + key] = '';
         } else {
             var metaFields = [
                 '1',

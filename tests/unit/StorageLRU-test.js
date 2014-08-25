@@ -72,6 +72,10 @@ describe('StorageLRU', function () {
                 key: 'bad',
                 bad: true,
                 value: 'invalid format'
+            },
+            {
+                key: 'empty',
+                value: ''
             }
         ]);
         storage = new StorageMock(mockData);
@@ -96,7 +100,7 @@ describe('StorageLRU', function () {
         expect(stats.error).to.eql(0, 'stats.error');
         expect(stats.error).to.eql(0, 'stats.revalidateSuccess');
         expect(stats.error).to.eql(0, 'stats.revalidateFailure');
-        expect(stats.du.count).to.eql(7, 'stats.du.count');
+        expect(stats.du.count).to.eql(8, 'stats.du.count');
         expect(stats.du.size > 0).to.eql(true, 'stats.du.size');
     });
 
@@ -108,7 +112,7 @@ describe('StorageLRU', function () {
 
     it('numItems', function () {
         var lru = new StorageLRU(storage, {keyPrefix: 'TEST_'});
-        expect(lru.numItems()).to.equal(7);
+        expect(lru.numItems()).to.equal(8);
     });
 
     it('_parseCacheControl', function () {
@@ -240,6 +244,14 @@ describe('StorageLRU', function () {
             lru.getItem('bad', {json: false}, function(err, value, meta) {
                 expect(err.code).to.equal(2, 'expect "cannot deserialize" error');
                 expect(lru.stats()).to.include({hit: 0, miss: 0, stale: 0, error: 1}, 'cache hit - stale');
+                done();
+            });
+        });
+        it('empty item', function (done) {
+            var lru = new StorageLRU(storage, {keyPrefix: 'TEST_'});
+            lru.getItem('empty', {}, function(err, value) {
+                expect(err.code).to.equal(2, 'expect deserialize error');
+                expect(lru.stats()).to.include({hit: 0, miss: 0, stale: 0, error: 1}, 'cache miss');
                 done();
             });
         });
@@ -389,7 +401,7 @@ describe('StorageLRU', function () {
         it('all purged spacedNeeded=100000', function (done) {
             var lru = new StorageLRU(storage, {keyPrefix: 'TEST_', purgedFn: function (purged) {
                 setTimeout(function () {
-                    expect(purged).to.eql(['bad', 'trulyStale', 'stale-lowpriority', 'stale', 'fresh', 'fresh-lastAccessed-biggerrecord', 'fresh-lastAccessed']);
+                    expect(purged).to.eql(['bad', 'empty', 'trulyStale', 'stale-lowpriority', 'stale', 'fresh', 'fresh-lastAccessed-biggerrecord', 'fresh-lastAccessed']);
                     done();
                 }, 1);
             }});
@@ -421,7 +433,7 @@ describe('StorageLRU', function () {
             var size = lru.numItems();
             lru.purge(50, function (err) {
                 expect(!err).to.eql(true);
-                expect(lru.numItems()).to.equal(size - 2);
+                expect(lru.numItems()).to.equal(size - 3);
                 done();
             });
         });

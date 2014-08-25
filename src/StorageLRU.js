@@ -299,38 +299,53 @@ StorageLRU.prototype.getItem = function (key, options, callback) {
     var self = this;
     var prefixedKey = self._prefix(key);
     var value = self._storage.getItem(prefixedKey);
-    if (!value) {
+    if (value === null || value === undefined) {
         self._stats.miss++;
         self._meta.remove(prefixedKey);
         callback();
-    } else {
-        try {
-            value = self._deserialize(value, options);
-            var meta = value.meta,
-                now = nowInSec();
-            if ((meta.expires + meta.stale) < now) {
-                self._stats.miss++;
-                self.removeItem(key);
-                callback();
-                return;
-            }
-            self._stats.hit++;
-            meta = self._meta.update(prefixedKey, {access: now});
-            // update the access timestamp in the underline storage
-            var serializedValue = self._serialize(value.value, meta, options);
-            self._storage.setItem(prefixedKey, serializedValue);
-            // is the item already expired but still in the stale-while-revalidate window?
-            var isStale = meta.expires < now;
-            if (isStale) {
-                self._stats.stale++;
-                self._revalidate(key, meta, {json: !!(options && options.json)});
-            }
-            callback(null, value.value, {isStale: isStale});
-        } catch (e) {
-            self._stats.error++;
-            callback(cloneError(ERR_DESERIALIZE, e.message));
-        }
+        return;
     }
+
+    var deserialized;
+    try {
+        deserialized = self._deserialize(value, options);
+    } catch (e) {
+        self._stats.error++;
+        callback(cloneError(ERR_DESERIALIZE, e.message));
+        return;
+    }
+
+    var meta = deserialized.meta,
+        now = nowInSec();
+    if ((meta.expires + meta.stale) < now) {
+        // item exists, but expired and passed stale-while-revalidate window.
+        // count as hit miss.
+        self._stats.miss++;
+        self.removeItem(key);
+        callback();
+        return;
+    }
+
+    // this is a cache hit
+    self._stats.hit++;
+
+    // update the access timestamp in the underline storage
+    try {
+        meta.access = now;
+        var serializedValue = self._serialize(deserialized.value, meta, options);
+        self._storage.setItem(prefixedKey, serializedValue);
+        meta = self._meta.update(prefixedKey, {access: now});
+    } catch (ignore) {}
+
+    // is the item already expired but still in the stale-while-revalidate window?
+    var isStale = meta.expires < now;
+    if (isStale) {
+        self._stats.stale++;
+        try {
+            self._revalidate(key, meta, {json: !!(options && options.json)});
+        } catch (ignore) {}
+    }
+    callback(null, deserialized.value, {isStale: isStale});
 };
 
 /**
@@ -381,11 +396,12 @@ StorageLRU.prototype._revalidate = function (key, meta, options, callback) {
             self._meta.update(prefixedKey, newMeta);
 
             self._stats.revalidateSuccess++;
-            callback && callback();
         } catch (e) {
             self._stats.revalidateFailure++;
             callback && callback(cloneError(ERR_REVALIDATE, e.message));
+            return;
         }
+        callback && callback();
     });
 };
 
@@ -452,32 +468,39 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
         self._storage.setItem(prefixedKey, serializedValue);
         meta.size = serializedValue.length;
         self._meta.update(prefixedKey, meta);
-        callback && callback();
     } catch (e) {
         if (self.numItems() === 0) {
-            // if numItems is 0, private mode is on or storage is disabled
+            // if numItems is 0, private mode is on or storage is disabled.
+            // callback with error and return
             self._markAsDisabled();
             callback && callback(cloneError(ERR_DISABLED));
-        } else {
-            // try purging
-            var spaceNeeded = serializedValue.length;
-            self.purge(spaceNeeded, function purgeCallback(err) {
-                if (err) {
-                    // not enough space purged
-                    callback && callback(cloneError(ERR_NOTENOUGHSPACE));
-                    return;
-                }
-                // purged enough space, now try to save again
-                try {
-                    self._storage.setItem(prefixedKey, serializedValue);
-                    self._meta.update(prefixedKey, meta);
-                    callback && callback();
-                } catch(errAfterPurge) {
-                    callback && callback(cloneError(ERR_NOTENOUGHSPACE));
-                }
-            });
+            return;
         }
+
+        // purge and save again
+        var spaceNeeded = serializedValue.length;
+        self.purge(spaceNeeded, function purgeCallback(err) {
+            if (err) {
+                // not enough space purged
+                callback && callback(cloneError(ERR_NOTENOUGHSPACE));
+                return;
+            }
+            // purged enough space, now try to save again
+            try {
+                self._storage.setItem(prefixedKey, serializedValue);
+                self._meta.update(prefixedKey, meta);
+            } catch(errAfterPurge) {
+                callback && callback(cloneError(ERR_NOTENOUGHSPACE));
+                return;
+            }
+            // setItem succeeded after the purge
+            callback && callback();
+        });
+        return;
     }
+
+    // setItem succeeded (did not need purge)
+    callback && callback();
 };
 
 /**
