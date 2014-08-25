@@ -1,6 +1,6 @@
 {
   "name": "storage-lru",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "An LRU implementation that can be used with local storage, or other storage mechanisms that support a similar interface.",
   "main": "index.js",
   "repository": {
