@@ -81,31 +81,41 @@ function defaultPurgeComparator(meta1, meta2) {
     }
 }
 
+
+
 function Meta(storageInterface, parser, options) {
     this.storage = storageInterface;
     this.parser = parser;
     this.options = options || {};
     this.records = [];
-    this.init();
 }
-Meta.prototype.init = function () {
+Meta.prototype.init = function (callback) {
     // expensive operation
     // go through all items in storage, get meta data
-    var storage = this.storage;
-    var keyPrefix = this.options.keyPrefix;
+    var self = this;
+    var storage = self.storage;
+    var keyPrefix = self.options.keyPrefix;
     for (var i = 0, len = storage.length; i < len; i++) {
-        var key = storage.key(i);
+        var key = storage.key(i); 
         if (!keyPrefix || key.indexOf(keyPrefix) === 0) {
-            var item = storage.getItem(key);
-            var meta;
-            try {
-                meta = this.parser.parse(item).meta;
-                meta.key = key;
-            } catch (ignore) {
-                // ignore
-                meta = {key: key, bad: true, size: item.length};
-            }
-            this.records.push(meta);
+            (function (itemKey, itemIndex) {
+                storage.getItem(itemKey, function(err, item) {
+                    if (!err) {
+                        var meta;
+                        try {
+                            meta = self.parser.parse(item).meta;
+                            meta.key = itemKey;
+                        } catch (ignore) {
+                            // ignore
+                            meta = {key: itemKey, bad: true, size: item.length};
+                        }
+                        self.records.push(meta);
+                        if (itemIndex === len - 1) {
+                            callback && callback();
+                        }
+                    }
+                });
+            })(key, i);
         }
     }
 };
@@ -231,19 +241,23 @@ Stats.prototype.toJSON = function(options) {
  * @param {Function} [options.revalidateFn] The function to be executed to refetch the item if it becomes expired but still
  *                   in the stale-while-revalidate window.
  */
-function StorageLRU(storageInterface, options) {
+function StorageLRU(storageInterface, options, callback) {
+    var self = this;
     options = options || {};
-    this.options = {};
-    this.options.recheckDelay = isDefined(options.recheckDelay) ? options.recheckDelay : -1;
-    this.options.keyPrefix = options.keyPrefix || DEFAULT_KEY_PREFIX;
-    this.options.purgedFn = options.purgedFn;
-    this._storage = storageInterface;
-    this._purgeComparator = options.purgeComparator || defaultPurgeComparator;
-    this._revalidateFn = options.revalidateFn;
-    this._parser = new Parser(this._storage, this.options);
-    this._meta = new Meta(this._storage, this._parser, this.options);
-    this._stats = new Stats(this._meta);
-    this._enabled = true;
+    self.options = {};
+    self.options.recheckDelay = isDefined(options.recheckDelay) ? options.recheckDelay : -1;
+    self.options.keyPrefix = options.keyPrefix || DEFAULT_KEY_PREFIX;
+    self.options.purgedFn = options.purgedFn;
+    self._storage = storageInterface;
+    self._purgeComparator = options.purgeComparator || defaultPurgeComparator;
+    self._revalidateFn = options.revalidateFn;
+    self._parser = new Parser(self._storage, self.options);
+    self._meta = new Meta(self._storage, self._parser, self.options);
+    self._meta.init(function () {
+        self._stats = new Stats(self._meta);
+        self._enabled = true;
+        callback && callback(self);
+    });
 }
 
 /**
@@ -295,57 +309,60 @@ StorageLRU.prototype.getItem = function (key, options, callback) {
         callback && callback(cloneError(ERR_INVALIDKEY, key));
         return;
     }
-
     var self = this;
     var prefixedKey = self._prefix(key);
-    var value = self._storage.getItem(prefixedKey);
-    if (value === null || value === undefined) {
-        self._stats.miss++;
-        self._meta.remove(prefixedKey);
-        callback();
-        return;
-    }
+    self._storage.getItem(prefixedKey, function(err, value) {
+        if (err || value === null || value === undefined) {
+            self._stats.miss++;
+            self._meta.remove(prefixedKey);
+            callback(err, null);
+            return;
+        }
 
-    var deserialized;
-    try {
-        deserialized = self._deserialize(value, options);
-    } catch (e) {
-        self._stats.error++;
-        callback(cloneError(ERR_DESERIALIZE, e.message));
-        return;
-    }
-
-    var meta = deserialized.meta,
-        now = nowInSec();
-    if ((meta.expires + meta.stale) < now) {
-        // item exists, but expired and passed stale-while-revalidate window.
-        // count as hit miss.
-        self._stats.miss++;
-        self.removeItem(key);
-        callback();
-        return;
-    }
-
-    // this is a cache hit
-    self._stats.hit++;
-
-    // update the access timestamp in the underline storage
-    try {
-        meta.access = now;
-        var serializedValue = self._serialize(deserialized.value, meta, options);
-        self._storage.setItem(prefixedKey, serializedValue);
-        meta = self._meta.update(prefixedKey, {access: now});
-    } catch (ignore) {}
-
-    // is the item already expired but still in the stale-while-revalidate window?
-    var isStale = meta.expires < now;
-    if (isStale) {
-        self._stats.stale++;
+        var deserialized;
         try {
-            self._revalidate(key, meta, {json: !!(options && options.json)});
+            deserialized = self._deserialize(value, options);
+        } catch (e) {
+            self._stats.error++;
+            callback(cloneError(ERR_DESERIALIZE, e.message));
+            return;
+        }
+
+        var meta = deserialized.meta,
+            now = nowInSec();
+        if ((meta.expires + meta.stale) < now) {
+            // item exists, but expired and passed stale-while-revalidate window.
+            // count as hit miss.
+            self._stats.miss++;
+            self.removeItem(key);
+            callback();
+            return;
+        }
+
+        // this is a cache hit
+        self._stats.hit++;
+
+        // update the access timestamp in the underline storage
+        try {
+            meta.access = now;
+            var serializedValue = self._serialize(deserialized.value, meta, options);
+            self._storage.setItem(prefixedKey, serializedValue, function (err) {
+                if (!err) {
+                    meta = self._meta.update(prefixedKey, {access: now});
+                }
+            });
         } catch (ignore) {}
-    }
-    callback(null, deserialized.value, {isStale: isStale});
+
+        // is the item already expired but still in the stale-while-revalidate window?
+        var isStale = meta.expires < now;
+        if (isStale) {
+            self._stats.stale++;
+            try {
+                self._revalidate(key, meta, {json: !!(options && options.json)});
+            } catch (ignore) {}
+        }
+        callback(null, deserialized.value, {isStale: isStale});
+    });
 };
 
 /**
@@ -390,12 +407,14 @@ StorageLRU.prototype._revalidate = function (key, meta, options, callback) {
             // save into the underline storage and update meta record
             var serializedValue = self._serialize(value, newMeta, options);
             var prefixedKey = self._prefix(key);
-            self._storage.setItem(prefixedKey, serializedValue);
+            self._storage.setItem(prefixedKey, serializedValue, function (err) {
+                if (!err) {
+                    newMeta.size = serializedValue.length;
+                    self._meta.update(prefixedKey, newMeta);
 
-            newMeta.size = serializedValue.length;
-            self._meta.update(prefixedKey, newMeta);
-
-            self._stats.revalidateSuccess++;
+                    self._stats.revalidateSuccess++;
+                }
+            });
         } catch (e) {
             self._stats.revalidateFailure++;
             callback && callback(cloneError(ERR_REVALIDATE, e.message));
@@ -464,41 +483,42 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
 
     // save into the underline storage and update meta record
     var prefixedKey = self._prefix(key);
-    try {
-        self._storage.setItem(prefixedKey, serializedValue);
-        meta.size = serializedValue.length;
-        self._meta.update(prefixedKey, meta);
-    } catch (e) {
-        if (self.numItems() === 0) {
-            // if numItems is 0, private mode is on or storage is disabled.
-            // callback with error and return
-            self._markAsDisabled();
-            callback && callback(cloneError(ERR_DISABLED));
+    self._storage.setItem(prefixedKey, serializedValue, function (err) {
+        if (!err) {
+            meta.size = serializedValue.length;
+            self._meta.update(prefixedKey, meta);
+        } else {
+            if (self.numItems() === 0) {
+                // if numItems is 0, private mode is on or storage is disabled.
+                // callback with error and return
+                self._markAsDisabled();
+                callback && callback(cloneError(ERR_DISABLED));
+                return;
+            }
+
+            // purge and save again
+            var spaceNeeded = serializedValue.length;
+            self.purge(spaceNeeded, function purgeCallback(err) {
+                if (err) {
+                    // not enough space purged
+                    callback && callback(cloneError(ERR_NOTENOUGHSPACE));
+                    return;
+                }
+                // purged enough space, now try to save again
+                self._storage.setItem(prefixedKey, serializedValue, function (err) {
+                    if (err) {
+                        callback && callback(cloneError(ERR_NOTENOUGHSPACE));
+                        return;
+                    } else {
+                        self._meta.update(prefixedKey, meta);
+                        // setItem succeeded after the purge
+                        callback && callback();
+                    }
+                });
+            });
             return;
         }
-
-        // purge and save again
-        var spaceNeeded = serializedValue.length;
-        self.purge(spaceNeeded, function purgeCallback(err) {
-            if (err) {
-                // not enough space purged
-                callback && callback(cloneError(ERR_NOTENOUGHSPACE));
-                return;
-            }
-            // purged enough space, now try to save again
-            try {
-                self._storage.setItem(prefixedKey, serializedValue);
-                self._meta.update(prefixedKey, meta);
-            } catch(errAfterPurge) {
-                callback && callback(cloneError(ERR_NOTENOUGHSPACE));
-                return;
-            }
-            // setItem succeeded after the purge
-            callback && callback();
-        });
-        return;
-    }
-
+    });
     // setItem succeeded (did not need purge)
     callback && callback();
 };
@@ -516,9 +536,14 @@ StorageLRU.prototype.removeItem = function (key, callback) {
     }
     var self = this;
     key = self._prefix(key);
-    self._storage.removeItem(key);
-    self._meta.remove(key);
-    callback && callback();
+    self._storage.removeItem(key, function (err) {
+        if (err) {
+            callback(err, key);
+            return;
+        }
+        self._meta.remove(key);
+        callback && callback();
+    }); 
 };
 
 /**
@@ -636,6 +661,8 @@ StorageLRU.prototype._deserialize = function (str, options) {
     };
 };
 
+
+
 /**
  * Purge the underline storage to make room for new data.  If options.purgedFn is defined
  * when LRU instance was created, this function will invoke it with the array if purged keys asynchronously.
@@ -648,6 +675,7 @@ StorageLRU.prototype._deserialize = function (str, options) {
  * @param {Error} callback.error  if the space that we were able to purge was less than spaceNeeded.
  */
 StorageLRU.prototype.purge = function (spaceNeeded, callback) {
+    var self = this;
     var factor = Math.max(0, this.options.purgeFactor) || 1;
     var padding = Math.round(spaceNeeded * factor);
     var size = spaceNeeded + padding;
@@ -656,36 +684,39 @@ StorageLRU.prototype.purge = function (spaceNeeded, callback) {
 
     var records = this._meta.records;
     var purged = [];
-    for (var i = records.length - 1; i >= 0; i--) {
-        if (size <= 0) {
-            break;
-        }
-        var item = records[i];
-        this._storage.removeItem(item.key);
-        records.splice(i, 1); // remove the meta record
-        purged.push(this._deprefix(item.key)); // record purged key
-        size = size - item.size;
-    }
 
-    // invoke purgedFn if it is defined
-    var purgedCallback = this.options.purgedFn;
-    if (purgedCallback && purged.length > 0) {
-        // execute the purged callback asynchronously to prevent library users
-        // from potentially slow down the purge process by executing long tasks
-        // in this callback.
-        setTimeout(function () {
-            purgedCallback(purged);
-        }, 100);
-    }
+    function removeRecords (index, size) {
+        var item = records[index];
+        self._storage.removeItem(item.key, function (err) {
+            records.splice(index, 1); // remove the meta record
+            purged.push(self._deprefix(item.key)); // record purged key
+            size = size - item.size;
+            if (size > 0) {
+                removeRecord(index - 1, size)
+            } else {
+                // invoke purgedFn if it is defined
+                var purgedCallback = self.options.purgedFn;
+                if (purgedCallback && purged.length > 0) {
+                    // execute the purged callback asynchronously to prevent library users
+                    // from potentially slow down the purge process by executing long tasks
+                    // in this callback.
+                    setTimeout(function () {
+                        purgedCallback(purged);
+                    }, 100);
+                }
 
-    // if enough space was made for spaceNeeded, consider purge as success
-    if (callback) {
-        if (size <= padding) {
-            callback();
-        } else {
-            callback(new Error('still need ' + (size - padding)));
-        }
+                // if enough space was made for spaceNeeded, consider purge as success
+                if (callback) {
+                    if (size <= padding) {
+                        callback();
+                    } else {
+                        callback(new Error('still need ' + (size - padding)));
+                    }
+                }
+            }
+        });
     }
+    removeRecords((records.length - 1, size));  
 };
 
 module.exports = StorageLRU;
