@@ -1,3 +1,10 @@
+/**
+ * @class  SyncWrapper
+ * @constructor
+ * A simple wrapper class to go around syncronous storage interfaces (such as html5 local storage).
+ * 
+ * @param {Object} storage The syncronous storage object.  It should implement the localStorage API.
+ */
 function SyncWrapper (storage) {
     this.storage = storage;
     Object.defineProperties(this, {

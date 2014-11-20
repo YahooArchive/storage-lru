@@ -89,33 +89,53 @@ function Meta(storageInterface, parser, options) {
     this.options = options || {};
     this.records = [];
 }
+
+Meta.prototype.setMetaItem = function (key, callback) {
+    var self = this;
+    self.storage.getItem(key, function(err, item) {
+        if (!err) {
+            var meta;
+            try {
+                meta = self.parser.parse(item).meta;
+                meta.key = key;
+            } catch (ignore) {
+                // ignore
+                meta = {key: key, bad: true, size: item.length};
+            }
+            self.records.push(meta);
+        }
+        callback && callback();
+    });
+}
+
 Meta.prototype.init = function (callback) {
     // expensive operation
     // go through all items in storage, get meta data
     var self = this;
     var storage = self.storage;
     var keyPrefix = self.options.keyPrefix;
+    var doneInserting = 0;
+
+    if (storage.length === 0) {
+        callback && callback();
+        return;
+    }
+    
+    function doneWithInsert() {
+        doneInserting += 1;
+        if (doneInserting === storage.length) {
+            callback && callback();
+        }
+    }
+    
     for (var i = 0, len = storage.length; i < len; i++) {
-        var key = storage.key(i); 
+        var key = storage.key(i);
         if (!keyPrefix || key.indexOf(keyPrefix) === 0) {
-            (function (itemKey, itemIndex) {
-                storage.getItem(itemKey, function(err, item) {
-                    if (!err) {
-                        var meta;
-                        try {
-                            meta = self.parser.parse(item).meta;
-                            meta.key = itemKey;
-                        } catch (ignore) {
-                            // ignore
-                            meta = {key: itemKey, bad: true, size: item.length};
-                        }
-                        self.records.push(meta);
-                        if (itemIndex === len - 1) {
-                            callback && callback();
-                        }
-                    }
-                });
-            })(key, i);
+            self.setMetaItem(key, function() {
+                doneWithInsert();
+            });
+        } else {
+            doneWithInsert();
         }
     }
 };
@@ -240,6 +260,8 @@ Stats.prototype.toJSON = function(options) {
  *                      bigger byte size
  * @param {Function} [options.revalidateFn] The function to be executed to refetch the item if it becomes expired but still
  *                   in the stale-while-revalidate window.
+ * @param {Function} [callback] An optional function that returns an instance of the cache once it is initialized.  If you do not
+ *                              use the callback, the instance returned by the constructor may not be finished initializing.
  */
 function StorageLRU(storageInterface, options, callback) {
     var self = this;
@@ -256,7 +278,7 @@ function StorageLRU(storageInterface, options, callback) {
     self._meta.init(function () {
         self._stats = new Stats(self._meta);
         self._enabled = true;
-        callback && callback(self);
+        callback && callback(null, self);
     });
 }
 
@@ -487,6 +509,9 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
         if (!err) {
             meta.size = serializedValue.length;
             self._meta.update(prefixedKey, meta);
+            // setItem succeeded (did not need purge)
+            callback && callback();
+            return;
         } else {
             if (self.numItems() === 0) {
                 // if numItems is 0, private mode is on or storage is disabled.
@@ -513,14 +538,12 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
                         self._meta.update(prefixedKey, meta);
                         // setItem succeeded after the purge
                         callback && callback();
+                        return;
                     }
                 });
             });
-            return;
         }
     });
-    // setItem succeeded (did not need purge)
-    callback && callback();
 };
 
 /**
@@ -691,8 +714,8 @@ StorageLRU.prototype.purge = function (spaceNeeded, callback) {
             records.splice(index, 1); // remove the meta record
             purged.push(self._deprefix(item.key)); // record purged key
             size = size - item.size;
-            if (size > 0) {
-                removeRecord(index - 1, size)
+            if (size > 0 && index > 0) {
+                removeRecords(index - 1, size)
             } else {
                 // invoke purgedFn if it is defined
                 var purgedCallback = self.options.purgedFn;
@@ -716,7 +739,7 @@ StorageLRU.prototype.purge = function (spaceNeeded, callback) {
             }
         });
     }
-    removeRecords((records.length - 1, size));  
+    removeRecords(records.length - 1, size);  
 };
 
 module.exports = StorageLRU;
