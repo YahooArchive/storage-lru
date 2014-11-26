@@ -92,7 +92,7 @@ function Meta(storageInterface, parser, options) {
 
 Meta.prototype.setMetaItem = function (key, callback) {
     var self = this;
-    self.storage.getItem(key, function(err, item) {
+    self.storage.getItem(key, function getItemCallback (err, item) {
         if (!err) {
             var meta;
             try {
@@ -131,7 +131,7 @@ Meta.prototype.init = function (callback) {
     for (var i = 0, len = storage.length; i < len; i++) {
         var key = storage.key(i);
         if (!keyPrefix || key.indexOf(keyPrefix) === 0) {
-            self.setMetaItem(key, function() {
+            self.setMetaItem(key, function setMetaItemCallback () {
                 doneWithInsert();
             });
         } else {
@@ -260,12 +260,14 @@ Stats.prototype.toJSON = function(options) {
  *                      bigger byte size
  * @param {Function} [options.revalidateFn] The function to be executed to refetch the item if it becomes expired but still
  *                   in the stale-while-revalidate window.
- * @param {Function} [callback] An optional function that returns an instance of the cache once it is initialized.  If you do not
+ * @param {Function} [options.onInit] An optional function that returns an instance of the cache once it is initialized.  If you do not
  *                              use the callback, the instance returned by the constructor may not be finished initializing.
  */
-function StorageLRU(storageInterface, options, callback) {
+function StorageLRU(storageInterface, options) {
     var self = this;
     options = options || {};
+    var callback = options.onInit;
+
     self.options = {};
     self.options.recheckDelay = isDefined(options.recheckDelay) ? options.recheckDelay : -1;
     self.options.keyPrefix = options.keyPrefix || DEFAULT_KEY_PREFIX;
@@ -275,7 +277,7 @@ function StorageLRU(storageInterface, options, callback) {
     self._revalidateFn = options.revalidateFn;
     self._parser = new Parser(self._storage, self.options);
     self._meta = new Meta(self._storage, self._parser, self.options);
-    self._meta.init(function () {
+    self._meta.init(function metaInitCallback () {
         self._stats = new Stats(self._meta);
         self._enabled = true;
         callback && callback(null, self);
@@ -333,11 +335,11 @@ StorageLRU.prototype.getItem = function (key, options, callback) {
     }
     var self = this;
     var prefixedKey = self._prefix(key);
-    self._storage.getItem(prefixedKey, function(err, value) {
+    self._storage.getItem(prefixedKey, function getItemCallback (err, value) {
         if (err || value === null || value === undefined) {
             self._stats.miss++;
             self._meta.remove(prefixedKey);
-            callback(err, null);
+            callback(cloneError(ERR_INVALIDKEY, key));
             return;
         }
 
@@ -368,7 +370,7 @@ StorageLRU.prototype.getItem = function (key, options, callback) {
         try {
             meta.access = now;
             var serializedValue = self._serialize(deserialized.value, meta, options);
-            self._storage.setItem(prefixedKey, serializedValue, function (err) {
+            self._storage.setItem(prefixedKey, serializedValue, function setItemCallback (err) {
                 if (!err) {
                     meta = self._meta.update(prefixedKey, {access: now});
                 }
@@ -429,12 +431,14 @@ StorageLRU.prototype._revalidate = function (key, meta, options, callback) {
             // save into the underline storage and update meta record
             var serializedValue = self._serialize(value, newMeta, options);
             var prefixedKey = self._prefix(key);
-            self._storage.setItem(prefixedKey, serializedValue, function (err) {
+            self._storage.setItem(prefixedKey, serializedValue, function setItemCallback (err) {
                 if (!err) {
                     newMeta.size = serializedValue.length;
                     self._meta.update(prefixedKey, newMeta);
 
                     self._stats.revalidateSuccess++;
+                } else {
+                    self._stats.revalidateFailure++;
                 }
             });
         } catch (e) {
@@ -505,7 +509,7 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
 
     // save into the underline storage and update meta record
     var prefixedKey = self._prefix(key);
-    self._storage.setItem(prefixedKey, serializedValue, function (err) {
+    self._storage.setItem(prefixedKey, serializedValue, function setItemCallback (err) {
         if (!err) {
             meta.size = serializedValue.length;
             self._meta.update(prefixedKey, meta);
@@ -523,14 +527,14 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
 
             // purge and save again
             var spaceNeeded = serializedValue.length;
-            self.purge(spaceNeeded, function purgeCallback(err) {
+            self.purge(spaceNeeded, function purgeCallback (err) {
                 if (err) {
                     // not enough space purged
                     callback && callback(cloneError(ERR_NOTENOUGHSPACE));
                     return;
                 }
                 // purged enough space, now try to save again
-                self._storage.setItem(prefixedKey, serializedValue, function (err) {
+                self._storage.setItem(prefixedKey, serializedValue, function setItemCallback (err) {
                     if (err) {
                         callback && callback(cloneError(ERR_NOTENOUGHSPACE));
                         return;
@@ -559,9 +563,9 @@ StorageLRU.prototype.removeItem = function (key, callback) {
     }
     var self = this;
     key = self._prefix(key);
-    self._storage.removeItem(key, function (err) {
+    self._storage.removeItem(key, function removeItemCallback (err) {
         if (err) {
-            callback(err, key);
+            callback && callback(cloneError(ERR_INVALIDKEY, key));
             return;
         }
         self._meta.remove(key);
@@ -710,7 +714,7 @@ StorageLRU.prototype.purge = function (spaceNeeded, callback) {
 
     function removeRecords (index, size) {
         var item = records[index];
-        self._storage.removeItem(item.key, function (err) {
+        self._storage.removeItem(item.key, function removeItemCallback (err) {
             records.splice(index, 1); // remove the meta record
             purged.push(self._deprefix(item.key)); // record purged key
             size = size - item.size;
@@ -723,7 +727,7 @@ StorageLRU.prototype.purge = function (spaceNeeded, callback) {
                     // execute the purged callback asynchronously to prevent library users
                     // from potentially slow down the purge process by executing long tasks
                     // in this callback.
-                    setTimeout(function () {
+                    setTimeout(function purgeTimeout () {
                         purgedCallback(purged);
                     }, 100);
                 }
