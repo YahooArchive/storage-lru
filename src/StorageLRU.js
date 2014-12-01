@@ -16,11 +16,19 @@ var ERR_DISABLED = {code: 1, message: 'disabled'},
     STALE_WHILE_REVALIDATE = 'stale-while-revalidate',
     DEFAULT_KEY_PREFIX = '',
     DEFAULT_PRIORITY = 3,
-    CUR_VERSION = '1';
+    CUR_VERSION = '1',
+    eachAsync = require('each-async');
  
-function isDefined(x) { return x !== undefined; }
+function isDefined (x) { return x !== undefined; }
 
-function cloneError(err, moreInfo) {
+function getIntegerOrDefault (x, defaultVal) {
+    if ((typeof x !== 'number') || (x % 1 !== 0)) {
+        return defaultVal;
+    }
+    return x;
+}
+
+function cloneError (err, moreInfo) {
     var message = err.message;
     if (moreInfo) {
         message += ': ' + moreInfo;
@@ -28,7 +36,7 @@ function cloneError(err, moreInfo) {
     return {code: err.code, message: message};
 }
 
-function merge() {
+function merge () {
     var merged = {};
     for (var i = 0, len = arguments.length; i < len; i++) {
         var obj = arguments[i];
@@ -41,68 +49,70 @@ function merge() {
     return merged;
 }
 
-function nowInSec() {
+function nowInSec () {
     return Math.floor(new Date().getTime() / 1000);
 }
 
 /*
  * Use this to sort meta records array.  Item to be purged first
- * should be the last in the array after sort.
+ * should be the first in the array after sort.
  */
-function defaultPurgeComparator(meta1, meta2) {
+function defaultPurgeComparator (meta1, meta2) {
     // purge bad entries first
     if (meta1.bad !== meta2.bad) {
-        return meta1.bad ? 1 : -1;
+        return meta1.bad ? -1 : 1;
     }
     // purge truly stale one first
     var now = nowInSec();
     var stale1 = now >= (meta1.expires + meta1.stale);
     var stale2 = now >= (meta2.expires + meta2.stale);
     if (stale1 !== stale2) {
-        return stale1 ? 1 : -1;
+        return stale1 ? -1 : 1;
     }
 
     // both fetchable (not truly staled); purge lowest priority one first
     if (meta1.priority !== meta2.priority) {
-        return (meta1.priority > meta2.priority) ? 1 : -1;
+        return (meta1.priority > meta2.priority) ? -1 : 1;
     }
 
     // same priority; purge least access one first
     if (meta1.access !== meta2.access) {
-        return (meta1.access < meta2.access) ? 1 : -1;
+        return (meta1.access < meta2.access) ? -1 : 1;
     }
     // compare size. big ones go first.
     if (meta1.size > meta2.size) {
-        return 1;
+        return -1;
     } else if (meta1.size === meta2.size) {
         return 0;
     } else {
-        return -1;
+        return 1;
     }
 }
 
-
-
-function Meta(storageInterface, parser, options) {
+function Meta (storageInterface, parser, options) {
     this.storage = storageInterface;
     this.parser = parser;
     this.options = options || {};
     this.records = [];
 }
 
+Meta.prototype.getMetaFromItem = function (key, item) {
+    var meta;
+    try {
+        meta = this.parser.parse(item).meta;
+        meta.key = key;
+    } catch (ignore) {
+        // ignore
+        meta = {key: key, bad: true, size: item.length};
+    }
+    return meta;
+}
+
 Meta.prototype.setMetaItem = function (key, callback) {
     var self = this;
     self.storage.getItem(key, function getItemCallback (err, item) {
         if (!err) {
-            var meta;
-            try {
-                meta = self.parser.parse(item).meta;
-                meta.key = key;
-            } catch (ignore) {
-                // ignore
-                meta = {key: key, bad: true, size: item.length};
-            }
-            self.records.push(meta);
+            self.records.push(self.getMetaFromItem(key, item));
         }
         callback && callback();
     });
@@ -114,31 +124,41 @@ Meta.prototype.init = function (callback) {
     var self = this;
     var storage = self.storage;
     var keyPrefix = self.options.keyPrefix;
+    var sampleSize = self.options.initSampleSize;
     var doneInserting = 0;
 
-    if (storage.length === 0) {
-        callback && callback();
-        return;
-    }
-    
-    function doneWithInsert() {
-        doneInserting += 1;
-        if (doneInserting === storage.length) {
+    storage.getSize(function getSizeCallback (err, size) {
+        //if samplesize < 0 just init all items
+        if (-1 < sampleSize && sampleSize < size) {
+            size = sampleSize;
+        }
+        if (size <= 0) {
             callback && callback();
+            return;
         }
-    }
-    
-    for (var i = 0, len = storage.length; i < len; i++) {
-        var key = storage.key(i);
-        if (!keyPrefix || key.indexOf(keyPrefix) === 0) {
-            self.setMetaItem(key, function setMetaItemCallback () {
-                doneWithInsert();
+
+        function doneWithInsert () {
+            doneInserting += 1;
+            if (doneInserting === size) {
+                callback && callback();
+            }
+        }
+
+        storage.getKeys(function getKeysCallback (err, keys) {
+            keys.some(function keyIterator (key) {
+                if (!keyPrefix || key.indexOf(keyPrefix) === 0) {
+                    self.setMetaItem(key, function setMetaItemCallback () {
+                        doneWithInsert();
+                    });
+                } else {
+                    doneWithInsert();
+                }
+                return doneInserting === size;
             });
-        } else {
-            doneWithInsert();
-        }
-    }
+        });
+    });
 };
+
 Meta.prototype.sort = function (comparator) {
     this.records.sort(comparator);
 };
@@ -175,7 +195,7 @@ Meta.prototype.du = function () {
     };
 };
 
-function Parser() {}
+function Parser () {}
 Parser.prototype.format = function (meta, value) {
     if (meta && meta.access > 0 && meta.expires > 0 && meta.stale >= 0 && meta.priority > 0 && meta.maxAge > 0) {
         return '[' + [CUR_VERSION, meta.access, meta.expires, meta.maxAge, meta.stale, meta.priority].join(':') + ']' + value;
@@ -212,7 +232,7 @@ Parser.prototype.parse = function (item) {
     };
 };
 
-function Stats(meta) {
+function Stats (meta) {
     this.hit = 0;
     this.miss = 0;
     this.stale = 0;
@@ -221,7 +241,7 @@ function Stats(meta) {
     this.revalidateFailure = 0;
     this._meta = meta;
 }
-Stats.prototype.toJSON = function(options) {
+Stats.prototype.toJSON = function (options) {
     var stats = {
         hit: this.hit,
         miss: this.miss,
@@ -247,6 +267,8 @@ Stats.prototype.toJSON = function(options) {
  *                   for re-checking whether the underline storage is re-enabled.  Default value is -1, which
  *                   means no re-checking.
  * @param {String} [options.keyPrefix=''] Storage key prefix.
+ * @param {String} [options.initSampleSize=10000] The maximum number of items in the storage interface to initialize. -1 for all items. Default is 10000 items
+ * @param {String} [options.maxInitOnPurge=10000] The maximum number of items to load when purging (if not all items in local storage were loaded on init). -1 for all items.
  * @param {Number} [options.purgeFactor=1]  Extra space to purge. E.g. if space needed for a new item is 1000 characters, LRU will actually
  *                   try to purge (1000 + 1000 * purgeFactor) characters.
  * @param {Function} [options.purgedFn] The callback function to be executed, if an item is purged.  *Note* This function will be
@@ -263,15 +285,17 @@ Stats.prototype.toJSON = function(options) {
  * @param {Function} [options.onInit] An optional function that returns an instance of the cache once it is initialized.  If you do not
  *                              use the callback, the instance returned by the constructor may not be finished initializing.
  */
-function StorageLRU(storageInterface, options) {
+function StorageLRU (storageInterface, options) {
     var self = this;
     options = options || {};
     var callback = options.onInit;
-
     self.options = {};
     self.options.recheckDelay = isDefined(options.recheckDelay) ? options.recheckDelay : -1;
     self.options.keyPrefix = options.keyPrefix || DEFAULT_KEY_PREFIX;
     self.options.purgedFn = options.purgedFn;
+    self.options.maxInitOnPurge = getIntegerOrDefault(options.maxInitOnPurge, 10000);
+    self.options.initSampleSize = getIntegerOrDefault(options.initSampleSize, 10000);
+
     self._storage = storageInterface;
     self._purgeComparator = options.purgeComparator || defaultPurgeComparator;
     self._revalidateFn = options.revalidateFn;
@@ -302,15 +326,12 @@ StorageLRU.prototype.stats = function (options) {
 };
 
 /**
- * Gets the key of the item at the given index in the underline storage
- * @method key
- * @param {Number} index  The item index
- * @return {String|Null}  The key string.
+ * Gets the keys of the items in the underline storage
+ * @method getKeys
+ * @return {Array}  The array of key strings.
  */
-StorageLRU.prototype.key = function (index) {
-    var key = this._storage.key(index);
-    key = key && this._deprefix(key);
-    return key;
+StorageLRU.prototype.getKeys = function (callback) {
+    return this._storage.getKeys(callback);
 };
 
 /**
@@ -351,9 +372,9 @@ StorageLRU.prototype.getItem = function (key, options, callback) {
             callback(cloneError(ERR_DESERIALIZE, e.message));
             return;
         }
-
         var meta = deserialized.meta,
             now = nowInSec();
+
         if ((meta.expires + meta.stale) < now) {
             // item exists, but expired and passed stale-while-revalidate window.
             // count as hit miss.
@@ -409,7 +430,7 @@ StorageLRU.prototype._revalidate = function (key, meta, options, callback) {
         return;
     }
 
-    self._revalidateFn(key, function revalidated(err, value) {
+    self._revalidateFn(key, function revalidated (err, value) {
         if (err) {
             self._stats.revalidateFailure++;
             callback && callback(cloneError(ERR_REVALIDATE, err.message));
@@ -517,33 +538,34 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
             callback && callback();
             return;
         } else {
-            if (self.numItems() === 0) {
-                // if numItems is 0, private mode is on or storage is disabled.
-                // callback with error and return
-                self._markAsDisabled();
-                callback && callback(cloneError(ERR_DISABLED));
-                return;
-            }
-
-            // purge and save again
-            var spaceNeeded = serializedValue.length;
-            self.purge(spaceNeeded, function purgeCallback (err) {
-                if (err) {
-                    // not enough space purged
-                    callback && callback(cloneError(ERR_NOTENOUGHSPACE));
+            self.numItems(function getNumItemsCallback (err, size) {
+                if (size === 0) {
+                    // if numItems is 0, private mode is on or storage is disabled.
+                    // callback with error and return
+                    self._markAsDisabled();
+                    callback && callback(cloneError(ERR_DISABLED));
                     return;
                 }
-                // purged enough space, now try to save again
-                self._storage.setItem(prefixedKey, serializedValue, function setItemCallback (err) {
+                // purge and save again
+                var spaceNeeded = serializedValue.length;
+                self.purge(spaceNeeded, false, function purgeCallback (err) {
                     if (err) {
+                        // not enough space purged
                         callback && callback(cloneError(ERR_NOTENOUGHSPACE));
                         return;
-                    } else {
-                        self._meta.update(prefixedKey, meta);
-                        // setItem succeeded after the purge
-                        callback && callback();
-                        return;
                     }
+                    // purged enough space, now try to save again
+                    self._storage.setItem(prefixedKey, serializedValue, function setItemCallback (err) {
+                        if (err) {
+                            callback && callback(cloneError(ERR_NOTENOUGHSPACE));
+                            return;
+                        } else {
+                            self._meta.update(prefixedKey, meta);
+                            // setItem succeeded after the purge
+                            callback && callback();
+                            return;
+                        }
+                    });
                 });
             });
         }
@@ -577,8 +599,8 @@ StorageLRU.prototype.removeItem = function (key, callback) {
  * @method numItems
  * @param {Number} Number of items in the underline storage.
  */
-StorageLRU.prototype.numItems = function () {
-    return this._storage.length;
+StorageLRU.prototype.numItems = function (callback) {
+    return this._storage.getSize(callback);
 };
 
 /**
@@ -688,62 +710,88 @@ StorageLRU.prototype._deserialize = function (str, options) {
     };
 };
 
-
-
 /**
  * Purge the underline storage to make room for new data.  If options.purgedFn is defined
  * when LRU instance was created, this function will invoke it with the array if purged keys asynchronously.
+ * If the meta data for all objects has not yet been built, then it will occur in this function.
  * @method purge
  * @param {Number} spaceNeeded The char count of space needed for the new data.  Note that
  *                   if options.purgeFactor is defined when LRU instance was created, extra space
  *                   will be purged. E.g. if spaceNeeded is 1000 characters, LRU will actually
  *                   try to purge (1000 + 1000 * purgeFactor) characters.
+ * @param {Boolean} forcePurge True if we want to ignore un-initialized records, else false;
  * @param {Function} callback  
  * @param {Error} callback.error  if the space that we were able to purge was less than spaceNeeded.
  */
-StorageLRU.prototype.purge = function (spaceNeeded, callback) {
+StorageLRU.prototype.purge = function (spaceNeeded, forcePurge, callback) {
     var self = this;
-    var factor = Math.max(0, this.options.purgeFactor) || 1;
+    var factor = Math.max(0, self.options.purgeFactor) || 1;
     var padding = Math.round(spaceNeeded * factor);
     var size = spaceNeeded + padding;
 
-    this._meta.sort(this._purgeComparator);
+    self._meta.sort(self._purgeComparator);
 
-    var records = this._meta.records;
+    var records = self._meta.records;
+    var recordSize = records.length;
+    var toBeRemoved = [];
     var purged = [];
 
-    function removeRecords (index, size) {
-        var item = records[index];
+    function removeRecords (item, index, done) {
+        //mark what we are removing so records never get out of sync
+        toBeRemoved.push(index); 
+        purged.push(self._deprefix(item.key)); // record purged key
         self._storage.removeItem(item.key, function removeItemCallback (err) {
-            records.splice(index, 1); // remove the meta record
-            purged.push(self._deprefix(item.key)); // record purged key
-            size = size - item.size;
-            if (size > 0 && index > 0) {
-                removeRecords(index - 1, size)
+            //if there was an error removing, remove the record but assume we still need some space
+            if (!err) {
+                size = size - item.size;
+            }
+            if (size > 0 && index < recordSize - 1) {
+                done(); //keep removing
             } else {
-                // invoke purgedFn if it is defined
-                var purgedCallback = self.options.purgedFn;
-                if (purgedCallback && purged.length > 0) {
-                    // execute the purged callback asynchronously to prevent library users
-                    // from potentially slow down the purge process by executing long tasks
-                    // in this callback.
-                    setTimeout(function purgeTimeout () {
-                        purgedCallback(purged);
-                    }, 100);
-                }
-
-                // if enough space was made for spaceNeeded, consider purge as success
-                if (callback) {
-                    if (size <= padding) {
-                        callback();
-                    } else {
-                        callback(new Error('still need ' + (size - padding)));
-                    }
-                }
+                done(true); //done removing
             }
         });
     }
-    removeRecords(records.length - 1, size);  
+    
+    //check to see if the meta information has been initialized for all objects
+    self.numItems(function numItemsCallback (err, currentSize) {
+        if (recordSize !== currentSize && !forcePurge) {
+            self._meta.init(self.options.maxInitOnPurge, function() {
+                //purge once we are ready
+                self.purge(spaceNeeded, true, callback);
+            });
+            return;
+        }
+
+        eachAsync(records, removeRecords, function eachAsyncCallback (ignore) {
+            //sort in descending order
+            toBeRemoved.sort(function toBeRemovedSorter (a,b) { 
+                return b - a; 
+            });
+            toBeRemoved.forEach(function toBeRemovedIterator (indexToRemove) {
+                records.splice(indexToRemove, 1); // remove the meta record
+            });
+            // invoke purgedFn if it is defined
+            var purgedCallback = self.options.purgedFn;
+            if (purgedCallback && purged.length > 0) {
+                // execute the purged callback asynchronously to prevent library users
+                // from potentially slow down the purge process by executing long tasks
+                // in this callback.
+                setTimeout(function purgeTimeout () {
+                    purgedCallback(purged);
+                }, 100);
+            }
+
+            // if enough space was made for spaceNeeded, consider purge as success
+            if (callback) {
+                if (size <= padding) {
+                    callback();
+                } else {
+                    callback(new Error('still need ' + (size - padding)));
+                }
+            }
+        });
+    });
 };
 
 module.exports = StorageLRU;

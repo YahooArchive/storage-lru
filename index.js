@@ -4,5 +4,5 @@
  */
 module.exports = {
         StorageLRU: require('./src/StorageLRU'),
-        SyncWrapper: require('./src/SyncWrapper')
+        Asyncify: require('./src/Asyncify')
     }

@@ -19,6 +19,9 @@
       "url": "https://github.com/yahoo/storage-lru/blob/master/LICENSE.md"
     }
   ],
+  "dependencies": {
+    "each-async": "^1.1.0"
+  },
   "devDependencies": {
     "chai": "^1.9.1",
     "coveralls": "^2.11.1",

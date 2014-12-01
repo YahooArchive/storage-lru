@@ -9,11 +9,11 @@ StorageLRU is a LRU implementation that can be used with local storage, or other
 ### Pluggable Underline Storage
 You can use your own storage of choice with StorageLRU, as long as it conforms to an asyncronous version of the localStorage API.  Specifically, it should provide the following interface:
 ```js
-length : propert - the number of objects stored
+getSize : function(callback) - the number of objects stored
 getItem : function (key, callback) - get the item with the associated key;
 setItem : function (key, item, callback) - set an item to the passed in key;
 removeItem : function (key, callback) - remove the item with the associated key;
-key : function (index) - get the key for the item at the given index;
+getKeys : function (callback) - get the keys for the items stored;
 ```
 Note that your storage should return 'null' or 'undefined' when a requested key does not exist.
 ```js
