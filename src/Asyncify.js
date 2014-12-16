@@ -1,12 +1,6 @@
+
 function getItem (key, callback) {
-    var item;
-    try {
-        item = this._getItem(key);
-    } catch (e) {
-        callback(e);
-        return;
-    }
-    callback(null, item);
+    callback(null, this._getItem(key));
 }
 
 function setItem (key, value, callback) {
@@ -17,25 +11,21 @@ function setItem (key, value, callback) {
         return;
     }
     callback(null, value);
-};
+}
 
 function removeItem (key, callback) {
-    try {
-        this._removeItem(key);
-    } catch (e) {
-        callback(e);
-        return;
-    }
+    this._removeItem(key);
     callback();
-};
+}
 
 function lengthToSize (callback) {
     callback(null, this.length);
 }
 
-function getKeylistFromIndices (callback) {
+function getKeylistFromIndices (num, callback) {
     var arr = [];
-    for (var i = 0, len = this.length; i < len; i++) {
+    var limit = (num > this.length) ? this.length : num;
+    for (var i = 0, len = limit; i < len; i++) {
         arr.push(this.key(i));
     }
     callback(null, arr);
@@ -47,7 +37,7 @@ function getKeylistFromIndices (callback) {
  * 
  * @param {Object} syncObject The syncronous storage object.
  */
-function Asyncify (syncObject) {
+function asyncify (syncObject) {
     syncObject._getItem = syncObject.getItem;
     syncObject._setItem = syncObject.setItem;
     syncObject._removeItem = syncObject.removeItem;
@@ -58,9 +48,9 @@ function Asyncify (syncObject) {
     //be smart about wrapping local storage
     if ((typeof syncObject.length === 'number') && (syncObject.length % 1 === 0)) {
         syncObject.getSize = lengthToSize;
-        syncObject.getKeys = getKeylistFromIndices;
+        syncObject.keys = getKeylistFromIndices;
     }
     return syncObject;
 }
 
-module.exports = Asyncify;
+module.exports = asyncify;

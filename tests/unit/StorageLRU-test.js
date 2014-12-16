@@ -7,7 +7,7 @@
 
 var expect = require('chai').expect,
     StorageLRU = require('../../src/StorageLRU'),
-    asyncify = require('../../src/Asyncify'),
+    asyncify = require('../../src/asyncify'),
     StorageMock =require('../mocks/StorageMock'),
     generateItems = require('../mocks/generateItems');
 
@@ -113,7 +113,7 @@ describe('StorageLRU', function () {
 
     it('get keys', function (done) {
         function testCallback (err, lru) {
-            lru.getKeys(function (err, keys) {
+            lru.keys(10, function (err, keys) {
                 expect(keys[0]).to.equal('TEST_fresh-lastAccessed', 'first key');
                 expect(keys[1]).to.equal('TEST_fresh', 'second key');
                 done();

@@ -4,20 +4,22 @@
  */
 'use strict';
 
-var ERR_DISABLED = {code: 1, message: 'disabled'},
-    ERR_DESERIALIZE = {code: 2, message: 'cannot deserialize'},
-    ERR_SERIALIZE = {code: 3, message: 'cannot serialize'},
-    ERR_CACHECONTROL = {code: 4, message: 'bad cacheControl'},
-    ERR_INVALIDKEY = {code: 5, message: 'invalid key'},
-    ERR_NOTENOUGHSPACE = {code: 6, message: 'not enough space'},
-    ERR_REVALIDATE = {code: 7, message: 'revalidate failed'},
+var ERR_DISABLED = {code: 1, message: 'disabled'};
+var ERR_DESERIALIZE = {code: 2, message: 'cannot deserialize'};
+var ERR_SERIALIZE = {code: 3, message: 'cannot serialize'};
+var ERR_CACHECONTROL = {code: 4, message: 'bad cacheControl'};
+var ERR_INVALIDKEY = {code: 5, message: 'invalid key'};
+var ERR_NOTENOUGHSPACE = {code: 6, message: 'not enough space'};
+var ERR_REVALIDATE = {code: 7, message: 'revalidate failed'};
     // cache control fields
-    MAX_AGE = 'max-age',
-    STALE_WHILE_REVALIDATE = 'stale-while-revalidate',
-    DEFAULT_KEY_PREFIX = '',
-    DEFAULT_PRIORITY = 3,
-    CUR_VERSION = '1',
-    eachAsync = require('each-async');
+var MAX_AGE = 'max-age';
+var STALE_WHILE_REVALIDATE = 'stale-while-revalidate';
+var DEFAULT_KEY_PREFIX = '';
+var DEFAULT_PRIORITY = 3;
+var DEFAULT_KEY_QUERY_SIZE = 1000;
+var CUR_VERSION = '1';
+var eachAsync = require('each-async');
+
  
 function isDefined (x) { return x !== undefined; }
 
@@ -108,7 +110,7 @@ Meta.prototype.getMetaFromItem = function (key, item) {
     return meta;
 }
 
-Meta.prototype.setMetaItem = function (key, callback) {
+Meta.prototype.updateMetaRecord = function (key, callback) {
     var self = this;
     self.storage.getItem(key, function getItemCallback (err, item) {
         if (!err) {
@@ -125,6 +127,7 @@ Meta.prototype.init = function (callback) {
     var storage = self.storage;
     var keyPrefix = self.options.keyPrefix;
     var sampleSize = self.options.initSampleSize;
+    var getKeySize = self.options.keyQuerySize;
     var doneInserting = 0;
 
     storage.getSize(function getSizeCallback (err, size) {
@@ -132,26 +135,25 @@ Meta.prototype.init = function (callback) {
         if (-1 < sampleSize && sampleSize < size) {
             size = sampleSize;
         }
-        if (size <= 0) {
+        if (size <= 0 || getKeySize <= 0) {
             callback && callback();
             return;
         }
 
-        function doneWithInsert () {
-            doneInserting += 1;
-            if (doneInserting === size) {
-                callback && callback();
-            }
-        }
-
-        storage.getKeys(function getKeysCallback (err, keys) {
+        storage.keys(getKeySize, function getKeysCallback (err, keys) {
             keys.some(function keyIterator (key) {
                 if (!keyPrefix || key.indexOf(keyPrefix) === 0) {
-                    self.setMetaItem(key, function setMetaItemCallback () {
-                        doneWithInsert();
+                    self.updateMetaRecord(key, function updateMetaRecordCallback () {
+                        doneInserting += 1;
+                        if (doneInserting === size) {
+                            callback && callback();
+                        }
                     });
                 } else {
-                    doneWithInsert();
+                    doneInserting += 1;
+                    if (doneInserting === size) {
+                        callback && callback();
+                    }
                 }
                 return doneInserting === size;
             });
@@ -267,6 +269,7 @@ Stats.prototype.toJSON = function (options) {
  *                   for re-checking whether the underline storage is re-enabled.  Default value is -1, which
  *                   means no re-checking.
  * @param {String} [options.keyPrefix=''] Storage key prefix.
+ * @param {Number} [options.keyQuerySize=1000] The number of keys to attempt to load from the underlying storage when the cache is initialized.
  * @param {String} [options.initSampleSize=10000] The maximum number of items in the storage interface to initialize. -1 for all items. Default is 10000 items
  * @param {String} [options.maxInitOnPurge=10000] The maximum number of items to load when purging (if not all items in local storage were loaded on init). -1 for all items.
  * @param {Number} [options.purgeFactor=1]  Extra space to purge. E.g. if space needed for a new item is 1000 characters, LRU will actually
@@ -292,15 +295,20 @@ function StorageLRU (storageInterface, options) {
     self.options = {};
     self.options.recheckDelay = isDefined(options.recheckDelay) ? options.recheckDelay : -1;
     self.options.keyPrefix = options.keyPrefix || DEFAULT_KEY_PREFIX;
+    self.options.keyQuerySize = options.keyQuerySize || DEFAULT_KEY_QUERY_SIZE;
     self.options.purgedFn = options.purgedFn;
     self.options.maxInitOnPurge = getIntegerOrDefault(options.maxInitOnPurge, 10000);
     self.options.initSampleSize = getIntegerOrDefault(options.initSampleSize, 10000);
-
+    var metaOptions = {
+        keyPrefix: self.options.keyPrefix,
+        initSampleSize: self.options.initSampleSize,
+        keyQuerySize: self.options.keyQuerySize
+    };
     self._storage = storageInterface;
     self._purgeComparator = options.purgeComparator || defaultPurgeComparator;
     self._revalidateFn = options.revalidateFn;
-    self._parser = new Parser(self._storage, self.options);
-    self._meta = new Meta(self._storage, self._parser, self.options);
+    self._parser = new Parser();
+    self._meta = new Meta(self._storage, self._parser, metaOptions);
     self._meta.init(function metaInitCallback () {
         self._stats = new Stats(self._meta);
         self._enabled = true;
@@ -326,12 +334,13 @@ StorageLRU.prototype.stats = function (options) {
 };
 
 /**
- * Gets the keys of the items in the underline storage
- * @method getKeys
- * @return {Array}  The array of key strings.
+ * Gets a number of the keys of the items in the underline storage
+ * @method keys
+ * @param {Number} the number of keys to return
+ * @param {Funtion} callback
  */
-StorageLRU.prototype.getKeys = function (callback) {
-    return this._storage.getKeys(callback);
+StorageLRU.prototype.keys = function (num, callback) {
+    return this._storage.keys(num, callback);
 };
 
 /**
@@ -710,6 +719,24 @@ StorageLRU.prototype._deserialize = function (str, options) {
     };
 };
 
+StorageLRU.prototype._removeRecord = function (removeData, item, index, done) {
+    //mark what we are removing so records never get out of sync
+    var self = this;
+    removeData.toBeRemoved.push(index); 
+    removeData.purged.push(self._deprefix(item.key)); // record purged key
+    self._storage.removeItem(item.key, function removeItemCallback (err) {
+        //if there was an error removing, remove the record but assume we still need some space
+        if (!err) {
+            removeData.size = removeData.size - item.size;
+        }
+        if (removeData.size > 0 && index < removeData.recordSize - 1) {
+            done(); //keep removing
+        } else {
+            done(true); //done removing
+        }
+    });
+}
+
 /**
  * Purge the underline storage to make room for new data.  If options.purgedFn is defined
  * when LRU instance was created, this function will invoke it with the array if purged keys asynchronously.
@@ -728,30 +755,13 @@ StorageLRU.prototype.purge = function (spaceNeeded, forcePurge, callback) {
     var factor = Math.max(0, self.options.purgeFactor) || 1;
     var padding = Math.round(spaceNeeded * factor);
     var size = spaceNeeded + padding;
+    var purged = [];
+    var toBeRemoved = [];
 
     self._meta.sort(self._purgeComparator);
 
     var records = self._meta.records;
     var recordSize = records.length;
-    var toBeRemoved = [];
-    var purged = [];
-
-    function removeRecords (item, index, done) {
-        //mark what we are removing so records never get out of sync
-        toBeRemoved.push(index); 
-        purged.push(self._deprefix(item.key)); // record purged key
-        self._storage.removeItem(item.key, function removeItemCallback (err) {
-            //if there was an error removing, remove the record but assume we still need some space
-            if (!err) {
-                size = size - item.size;
-            }
-            if (size > 0 && index < recordSize - 1) {
-                done(); //keep removing
-            } else {
-                done(true); //done removing
-            }
-        });
-    }
     
     //check to see if the meta information has been initialized for all objects
     self.numItems(function numItemsCallback (err, currentSize) {
@@ -762,8 +772,14 @@ StorageLRU.prototype.purge = function (spaceNeeded, forcePurge, callback) {
             });
             return;
         }
+        var removeData = {
+            toBeRemoved: toBeRemoved,
+            purged: purged,
+            size: size,
+            recordSize: recordSize
+        };
 
-        eachAsync(records, removeRecords, function eachAsyncCallback (ignore) {
+        eachAsync(records, self._removeRecord.bind(self, removeData), function done (ignore) {
             //sort in descending order
             toBeRemoved.sort(function toBeRemovedSorter (a,b) { 
                 return b - a; 
@@ -784,10 +800,10 @@ StorageLRU.prototype.purge = function (spaceNeeded, forcePurge, callback) {
 
             // if enough space was made for spaceNeeded, consider purge as success
             if (callback) {
-                if (size <= padding) {
+                if (removeData.size <= padding) {
                     callback();
                 } else {
-                    callback(new Error('still need ' + (size - padding)));
+                    callback(new Error('still need ' + (removeData.size - padding)));
                 }
             }
         });
