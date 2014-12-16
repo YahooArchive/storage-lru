@@ -125,10 +125,8 @@ describe('StorageLRU', function () {
 
     it('numItems', function (done) {
         function testCallback (err, lru) {
-            lru.numItems(function (err, num) {
-                expect(num).to.equal(8);
-                done();
-            });
+            expect(lru.numLoadedItems()).to.equal(8);
+            done();
         }
         new StorageLRU(storage, {keyPrefix: 'TEST_', onInit: testCallback});
         
@@ -170,16 +168,13 @@ describe('StorageLRU', function () {
         });
         it('cache miss - truly stale', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function(err, size) {
-                    lru.getItem('trulyStale', {}, function(err, value) {
-                        expect(!err).to.equal(true, 'no error');
-                        expect(!value).to.equal(true, 'no value');
-                        expect(lru.stats()).to.include({hit: 0, miss: 1, stale: 0, error: 0}, 'cache miss - truly stale');
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(size - 1, 'truly stale item removed');
-                            done();
-                        });
-                    });
+                var size = lru.numLoadedItems();
+                lru.getItem('trulyStale', {}, function(err, value) {
+                    expect(!err).to.equal(true, 'no error');
+                    expect(!value).to.equal(true, 'no value');
+                    expect(lru.stats()).to.include({hit: 0, miss: 1, stale: 0, error: 0}, 'cache miss - truly stale');
+                    expect(lru.numLoadedItems()).to.equal(size - 1, 'truly stale item removed');
+                    done();
                 });
             }
             new StorageLRU(storage, {keyPrefix: 'TEST_', onInit: testCallback});
@@ -207,7 +202,7 @@ describe('StorageLRU', function () {
                     });
                 });
             }
-            new StorageLRU(storage, {keyPrefix: 'TEST_', onInit: testCallback, initSampleSize: 0});
+            new StorageLRU(storage, {keyPrefix: 'TEST_', onInit: testCallback, scanSize: 0});
         });
         it('cache hit - fresh', function (done) {
             function testCallback (err, lru) {
@@ -246,28 +241,27 @@ describe('StorageLRU', function () {
         });
         it('cache hit - stale - revalidate success', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    var record = findMetaRecord(lru._meta.records, 'TEST_stale');
-                    expect(record.key).to.equal('TEST_stale');
-                    expect(record.size).to.equal(86);
-                    expect(record.stale).to.equal(300);
+                var size = lru.numLoadedItems();
+                var record = findMetaRecord(lru._meta.records, 'TEST_stale');
+                expect(record.key).to.equal('TEST_stale');
+                expect(record.size).to.equal(86);
+                expect(record.stale).to.equal(300);
 
-                    lru.getItem('stale', {json: false}, function(err, value, meta) {
-                        expect(!err).to.equal(true, 'no error, but getting: ' + (err && err.message));
-                        expect(meta.isStale).to.equal(true);
-                        expect(value).to.equal('expired 1min ago, stale=5, last accessed 10mins ago');
-                        expect(lru.stats()).to.include({hit: 1, miss: 0, stale: 1, error: 0, revalidateSuccess:1, revalidateFailure: 0}, 'cache hit,stale,revalidateSuccess');
+                lru.getItem('stale', {json: false}, function(err, value, meta) {
+                    expect(!err).to.equal(true, 'no error, but getting: ' + (err && err.message));
+                    expect(meta.isStale).to.equal(true);
+                    expect(value).to.equal('expired 1min ago, stale=5, last accessed 10mins ago');
+                    expect(lru.stats()).to.include({hit: 1, miss: 0, stale: 1, error: 0, revalidateSuccess:1, revalidateFailure: 0}, 'cache hit,stale,revalidateSuccess');
 
-                        var updatedRecord = findMetaRecord(lru._meta.records, 'TEST_stale');
-                        expect(updatedRecord.key).to.equal(record.key, 'key remains the same');
-                        expect(updatedRecord.size).to.equal(52, 'size is updated');
-                        expect(updatedRecord.access).to.be.above(record.access, 'access timestamp is updated');
-                        expect(updatedRecord.expires).to.be.above(record.expires, 'expires timestamp is extended');
-                        expect(updatedRecord.maxAge).to.equal(record.maxAge, 'maxAge remains the same');
-                        expect(updatedRecord.stale).to.equal(record.stale, 'stale window size remains the same');
-                        expect(updatedRecord.priority).to.equal(record.priority, 'priority remains the same');
-                        done();
-                    });
+                    var updatedRecord = findMetaRecord(lru._meta.records, 'TEST_stale');
+                    expect(updatedRecord.key).to.equal(record.key, 'key remains the same');
+                    expect(updatedRecord.size).to.equal(52, 'size is updated');
+                    expect(updatedRecord.access).to.be.above(record.access, 'access timestamp is updated');
+                    expect(updatedRecord.expires).to.be.above(record.expires, 'expires timestamp is extended');
+                    expect(updatedRecord.maxAge).to.equal(record.maxAge, 'maxAge remains the same');
+                    expect(updatedRecord.stale).to.equal(record.stale, 'stale window size remains the same');
+                    expect(updatedRecord.priority).to.equal(record.priority, 'priority remains the same');
+                    done();
                 });
             }
             new StorageLRU(storage, {
@@ -280,28 +274,27 @@ describe('StorageLRU', function () {
         });
         it('cache hit - stale - revalidate failure', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    var record = findMetaRecord(lru._meta.records, 'TEST_stale');
-                    expect(record.key).to.equal('TEST_stale');
-                    expect(record.size).to.equal(86);
-                    expect(record.stale).to.equal(300);
+                var size = lru.numLoadedItems();
+                var record = findMetaRecord(lru._meta.records, 'TEST_stale');
+                expect(record.key).to.equal('TEST_stale');
+                expect(record.size).to.equal(86);
+                expect(record.stale).to.equal(300);
 
-                    lru.getItem('stale', {json: false}, function(err, value, meta) {
-                        expect(!err).to.equal(true, 'no error, but getting: ' + (err && err.message));
-                        expect(meta.isStale).to.equal(true);
-                        expect(value).to.equal('expired 1min ago, stale=5, last accessed 10mins ago');
-                        expect(lru.stats()).to.include({hit: 1, miss: 0, stale: 1, error: 0, revalidateSuccess:0, revalidateFailure: 1}, 'cache hit,stale,revalidateFailure');
+                lru.getItem('stale', {json: false}, function(err, value, meta) {
+                    expect(!err).to.equal(true, 'no error, but getting: ' + (err && err.message));
+                    expect(meta.isStale).to.equal(true);
+                    expect(value).to.equal('expired 1min ago, stale=5, last accessed 10mins ago');
+                    expect(lru.stats()).to.include({hit: 1, miss: 0, stale: 1, error: 0, revalidateSuccess:0, revalidateFailure: 1}, 'cache hit,stale,revalidateFailure');
 
-                        var updatedRecord = findMetaRecord(lru._meta.records, 'TEST_stale');
-                        expect(updatedRecord.key).to.equal(record.key, 'key remains the same');
-                        expect(updatedRecord.size).to.equal(record.size, 'size remains the same');
-                        expect(updatedRecord.access).to.be.above(record.access, 'access timestamp is updated');
-                        expect(updatedRecord.expires).to.equal(record.expires, 'expires timestamp remains the same');
-                        expect(updatedRecord.maxAge).to.equal(record.maxAge, 'maxAge remains the same');
-                        expect(updatedRecord.stale).to.equal(record.stale, 'stale window size remains the same');
-                        expect(updatedRecord.priority).to.equal(record.priority, 'priority remains the same');
-                        done();
-                    });
+                    var updatedRecord = findMetaRecord(lru._meta.records, 'TEST_stale');
+                    expect(updatedRecord.key).to.equal(record.key, 'key remains the same');
+                    expect(updatedRecord.size).to.equal(record.size, 'size remains the same');
+                    expect(updatedRecord.access).to.be.above(record.access, 'access timestamp is updated');
+                    expect(updatedRecord.expires).to.equal(record.expires, 'expires timestamp remains the same');
+                    expect(updatedRecord.maxAge).to.equal(record.maxAge, 'maxAge remains the same');
+                    expect(updatedRecord.stale).to.equal(record.stale, 'stale window size remains the same');
+                    expect(updatedRecord.priority).to.equal(record.priority, 'priority remains the same');
+                    done();
                 });
             }
             new StorageLRU(storage, {
@@ -338,34 +331,29 @@ describe('StorageLRU', function () {
     describe('#setItem', function () {
         it('invalid key', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    lru.setItem('', {foo: 'bar'}, {json: true, cacheControl: 'max-age=300'}, function (err, value) {
-                        expect(err.code).to.equal(5, 'expect "invalid key" error');
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(size, 'numItems remains the same');
-                            done();
-                        });
-                    });
+                var size = lru.numLoadedItems();
+                lru.setItem('', {foo: 'bar'}, {json: true, cacheControl: 'max-age=300'}, function (err, value) {
+                    expect(err.code).to.equal(5, 'expect "invalid key" error');
+                    expect(lru.numLoadedItems()).to.equal(size, 'numItems remains the same');
+                    done();
                 });
             }
             new StorageLRU(storage, {keyPrefix: 'TEST_', onInit: testCallback});
         });
         it('new item, json=true', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    lru.setItem('new_item', {foo: 'bar'}, {json: true, cacheControl: 'max-age=300'}, function (err) {
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(size + 1, 'numItems should increase by 1');
-                            var record = findMetaRecord(lru._meta.records, 'TEST_new_item');
-                            expect(record.key).to.equal('TEST_new_item');
-                            expect(record.size).to.equal(46);
-                            expect(record.stale).to.equal(0);
-                            lru.getItem('new_item', {}, function (err, value, meta) {
-                                expect(value).to.equal('{"foo":"bar"}');
-                                expect(meta.isStale).to.equal(false);
-                                done();
-                            });
-                        });
+                var size = lru.numLoadedItems();
+                lru.setItem('new_item', {foo: 'bar'}, {json: true, cacheControl: 'max-age=300'}, function (err) {
+                    var num = lru.numLoadedItems();
+                    expect(num).to.equal(size + 1, 'numItems should increase by 1');
+                    var record = findMetaRecord(lru._meta.records, 'TEST_new_item');
+                    expect(record.key).to.equal('TEST_new_item');
+                    expect(record.size).to.equal(46);
+                    expect(record.stale).to.equal(0);
+                    lru.getItem('new_item', {}, function (err, value, meta) {
+                        expect(value).to.equal('{"foo":"bar"}');
+                        expect(meta.isStale).to.equal(false);
+                        done();
                     });
                 });
             }
@@ -373,16 +361,14 @@ describe('StorageLRU', function () {
         });
         it('new item, json=false', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    lru.setItem('new_item', 'foobar', {json: false, cacheControl: 'max-age=300'}, function (err) {
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(size + 1);
-                            lru.getItem('new_item', {json: false}, function (err, value, meta) {
-                                expect(value).to.equal('foobar');
-                                expect(meta.isStale).to.equal(false);
-                                done();
-                            });
-                        });
+                var size = lru.numLoadedItems();
+                lru.setItem('new_item', 'foobar', {json: false, cacheControl: 'max-age=300'}, function (err) {
+                    var num = lru.numLoadedItems();
+                    expect(num).to.equal(size + 1);
+                    lru.getItem('new_item', {json: false}, function (err, value, meta) {
+                        expect(value).to.equal('foobar');
+                        expect(meta.isStale).to.equal(false);
+                        done();
                     });
                 });
             }
@@ -390,16 +376,14 @@ describe('StorageLRU', function () {
         });
         it('new item, json default is false', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    lru.setItem('new_item', '{foo:"bar"}', {cacheControl: 'max-age=300'}, function (err) {
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(size + 1);
-                            lru.getItem('new_item', {}, function (err, value, meta) {
-                                expect(value).to.equal('{foo:"bar"}');
-                                expect(meta.isStale).to.equal(false);
-                                done();
-                            });
-                        });
+                var size = lru.numLoadedItems();
+                lru.setItem('new_item', '{foo:"bar"}', {cacheControl: 'max-age=300'}, function (err) {
+                    var num = lru.numLoadedItems();
+                    expect(num).to.equal(size + 1);
+                    lru.getItem('new_item', {}, function (err, value, meta) {
+                        expect(value).to.equal('{foo:"bar"}');
+                        expect(meta.isStale).to.equal(false);
+                        done();
                     });
                 });
             }
@@ -407,22 +391,20 @@ describe('StorageLRU', function () {
         });
         it('existing item, json=false', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, numItems) {
-                    var record = findMetaRecord(lru._meta.records, 'TEST_fresh');
-                    var access = record.access;
-                    var size = record.size;
-                    lru.setItem('fresh', 'foobar', {json: false, cacheControl: 'max-age=300'}, function (err) {
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(numItems, 'numItems is correct');
-                            var updatedRecord = findMetaRecord(lru._meta.records, 'TEST_fresh');
-                            expect(updatedRecord.access > access).to.equal(true, 'access timestamp updated');
-                            expect(updatedRecord.size < size).to.equal(true, 'size timestamp updated');
-                            lru.getItem('fresh', {json: false}, function (err, value, meta) {
-                                expect(value).to.equal('foobar');
-                                expect(meta.isStale).to.equal(false);
-                                done();
-                            });
-                        });
+                var numItems = lru.numLoadedItems();
+                var record = findMetaRecord(lru._meta.records, 'TEST_fresh');
+                var access = record.access;
+                var size = record.size;
+                lru.setItem('fresh', 'foobar', {json: false, cacheControl: 'max-age=300'}, function (err) {
+                    var num = lru.numLoadedItems();
+                    expect(num).to.equal(numItems, 'numItems is correct');
+                    var updatedRecord = findMetaRecord(lru._meta.records, 'TEST_fresh');
+                    expect(updatedRecord.access > access).to.equal(true, 'access timestamp updated');
+                    expect(updatedRecord.size < size).to.equal(true, 'size timestamp updated');
+                    lru.getItem('fresh', {json: false}, function (err, value, meta) {
+                        expect(value).to.equal('foobar');
+                        expect(meta.isStale).to.equal(false);
+                        done();
                     });
                 });
             }
@@ -520,13 +502,10 @@ describe('StorageLRU', function () {
     describe('#purge', function () {
         it('all purged spacedNeeded=100000', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    lru.purge(10000, false, function (err) {
-                        expect(!!err).to.equal(true, 'not enough space');
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(0);
-                        });
-                    });
+                var size = lru.numLoadedItems();
+                lru.purge(10000, false, function (err) {
+                    expect(!!err).to.equal(true, 'not enough space');
+                    expect(lru.numLoadedItems()).to.equal(0);
                 });
             }
             new StorageLRU(storage, {keyPrefix: 'TEST_', purgedFn: function (purged) {
@@ -538,15 +517,11 @@ describe('StorageLRU', function () {
         });
         it('1 purged spacedNeeded=3', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    lru.purge(3, false, function (err) {
-                        expect(!err).to.eql(true);
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(size - 1);
-                            done();
-                        });
-                        
-                    });
+                var size = lru.numLoadedItems();
+                lru.purge(3, false, function (err) {
+                    expect(!err).to.eql(true);
+                    expect(lru.numLoadedItems()).to.equal(size - 1);
+                    done();
                 });
             }
             new StorageLRU(storage, {keyPrefix: 'TEST_', purgedFn: function (purged) {
@@ -557,14 +532,11 @@ describe('StorageLRU', function () {
         });
         it('2 purged spacedNeeded=50', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    lru.purge(50, false, function (err) {
-                        expect(!err).to.eql(true);
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(size - 3);
-                        });
-                        done();
-                    });
+                var size = lru.numLoadedItems();
+                lru.purge(50, false, function (err) {
+                    expect(!err).to.eql(true);
+                    expect(lru.numLoadedItems()).to.equal(size - 3);
+                    done();
                 });
             }
             new StorageLRU(storage, {keyPrefix: 'TEST_', purgedFn: function (purged) {
@@ -697,28 +669,22 @@ describe('StorageLRU', function () {
     describe('#removeItem', function () {
         it('valid key', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    lru.removeItem('fresh', function (err) {
-                        expect(!err).to.equal(true, 'expect no error');
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(size - 1, 'numItems should decrease by 1');
-                            done();
-                        });
-                    });
+                var size = lru.numLoadedItems();
+                lru.removeItem('fresh', function (err) {
+                    expect(!err).to.equal(true, 'expect no error');
+                    expect(lru.numLoadedItems()).to.equal(size - 1, 'numItems should decrease by 1');
+                    done();
                 });
             }
             new StorageLRU(storage, {keyPrefix: 'TEST_', onInit: testCallback});
         });
         it('invalid key', function (done) {
             function testCallback (err, lru) {
-                lru.numItems(function (err, size) {
-                    lru.removeItem('', function (err) {
-                        expect(err.code).to.equal(5, 'expect "invalid key" error');
-                        lru.numItems(function (err, num) {
-                            expect(num).to.equal(size, 'numItems should not change');
-                            done();
-                        });
-                    });
+                var size = lru.numLoadedItems();
+                lru.removeItem('', function (err) {
+                    expect(err.code).to.equal(5, 'expect "invalid key" error');
+                    expect(lru.numLoadedItems()).to.equal(size, 'numItems should not change');
+                    done();
                 });
             }
             new StorageLRU(storage, {keyPrefix: 'TEST_', onInit: testCallback});

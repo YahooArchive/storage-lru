@@ -18,10 +18,6 @@ function removeItem (key, callback) {
     callback();
 }
 
-function lengthToSize (callback) {
-    callback(null, this.length);
-}
-
 function getKeylistFromIndices (num, callback) {
     var arr = [];
     var limit = (num > this.length) ? this.length : num;
@@ -46,8 +42,7 @@ function asyncify (syncObject) {
     syncObject.removeItem = removeItem;
 
     //be smart about wrapping local storage
-    if ((typeof syncObject.length === 'number') && (syncObject.length % 1 === 0)) {
-        syncObject.getSize = lengthToSize;
+    if (!syncObject.keys && (typeof syncObject.length === 'number')) {
         syncObject.keys = getKeylistFromIndices;
     }
     return syncObject;

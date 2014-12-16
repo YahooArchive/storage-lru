@@ -16,7 +16,9 @@ var MAX_AGE = 'max-age';
 var STALE_WHILE_REVALIDATE = 'stale-while-revalidate';
 var DEFAULT_KEY_PREFIX = '';
 var DEFAULT_PRIORITY = 3;
-var DEFAULT_KEY_QUERY_SIZE = 1000;
+var DEFAULT_PURGE_LOAD_INCREASE = 500;
+var DEFAULT_PURGE_LOAD_ATTEMPTS = 2;
+var DEFAULT_SCAN_SIZE = 1000;
 var CUR_VERSION = '1';
 var eachAsync = require('each-async');
 
@@ -120,43 +122,38 @@ Meta.prototype.updateMetaRecord = function (key, callback) {
     });
 }
 
-Meta.prototype.init = function (callback) {
+Meta.prototype.init = function (scanSize, callback) {
     // expensive operation
     // go through all items in storage, get meta data
     var self = this;
     var storage = self.storage;
     var keyPrefix = self.options.keyPrefix;
-    var sampleSize = self.options.initSampleSize;
-    var getKeySize = self.options.keyQuerySize;
     var doneInserting = 0;
+    if (scanSize <= 0) {
+        callback && callback();
+        return;
+    }
 
-    storage.getSize(function getSizeCallback (err, size) {
-        //if samplesize < 0 just init all items
-        if (-1 < sampleSize && sampleSize < size) {
-            size = sampleSize;
-        }
-        if (size <= 0 || getKeySize <= 0) {
+    storage.keys(scanSize, function getKeysCallback (err, keys) {
+        var numKeys = keys.length;
+        if (numKeys <= 0) {
             callback && callback();
             return;
         }
-
-        storage.keys(getKeySize, function getKeysCallback (err, keys) {
-            keys.some(function keyIterator (key) {
-                if (!keyPrefix || key.indexOf(keyPrefix) === 0) {
-                    self.updateMetaRecord(key, function updateMetaRecordCallback () {
-                        doneInserting += 1;
-                        if (doneInserting === size) {
-                            callback && callback();
-                        }
-                    });
-                } else {
+        keys.forEach(function keyIterator (key) {
+            if (!keyPrefix || key.indexOf(keyPrefix) === 0) {
+                self.updateMetaRecord(key, function updateMetaRecordCallback () {
                     doneInserting += 1;
-                    if (doneInserting === size) {
-                        callback && callback();
+                    if (doneInserting === numKeys) {
+                       callback && callback();
                     }
+                });
+            } else {
+                doneInserting += 1;
+                if (doneInserting === numKeys) {
+                    callback && callback();
                 }
-                return doneInserting === size;
-            });
+            }
         });
     });
 };
@@ -181,7 +178,7 @@ Meta.prototype.update = function (key, meta) {
 Meta.prototype.remove = function (key) {
     for (var i = 0, len = this.records.length; i < len; i++) {
         if (this.records[i].key === key) {
-            this.records.splice(i);
+            this.records.splice(i, 1);
             return;
         }
     }
@@ -269,11 +266,13 @@ Stats.prototype.toJSON = function (options) {
  *                   for re-checking whether the underline storage is re-enabled.  Default value is -1, which
  *                   means no re-checking.
  * @param {String} [options.keyPrefix=''] Storage key prefix.
- * @param {Number} [options.keyQuerySize=1000] The number of keys to attempt to load from the underlying storage when the cache is initialized.
- * @param {String} [options.initSampleSize=10000] The maximum number of items in the storage interface to initialize. -1 for all items. Default is 10000 items
- * @param {String} [options.maxInitOnPurge=10000] The maximum number of items to load when purging (if not all items in local storage were loaded on init). -1 for all items.
+ * @param {Number} [options.scanSize=1000] The number of keys to attempt to load from the underlying storage when the cache is initialized.
  * @param {Number} [options.purgeFactor=1]  Extra space to purge. E.g. if space needed for a new item is 1000 characters, LRU will actually
  *                   try to purge (1000 + 1000 * purgeFactor) characters.
+ * @param {Number} [options.maxPurgeLoadAttempts=2] The number of times to load 'purgeLoadIncrease' more keys if purge cannot initially
+ *                    find enough space.
+ * @param {Number} [options.purgeLoadIncrease=500] The number of extra keys to load with each purgeLoadAttempt when purge cannot initially
+ *                    find enough space.
  * @param {Function} [options.purgedFn] The callback function to be executed, if an item is purged.  *Note* This function will be
  *                   asynchronously called, meaning, you won't be able to cancel the purge.
  * @param {Function} [options.purgeComparator] If you really want to, you can customize the comparator used to determine items'
@@ -295,21 +294,19 @@ function StorageLRU (storageInterface, options) {
     self.options = {};
     self.options.recheckDelay = isDefined(options.recheckDelay) ? options.recheckDelay : -1;
     self.options.keyPrefix = options.keyPrefix || DEFAULT_KEY_PREFIX;
-    self.options.keyQuerySize = options.keyQuerySize || DEFAULT_KEY_QUERY_SIZE;
+    self.options.scanSize = getIntegerOrDefault(options.scanSize, DEFAULT_SCAN_SIZE);
+    self.options.purgeLoadIncrease = getIntegerOrDefault(options.purgeLoadIncrease, DEFAULT_PURGE_LOAD_INCREASE);
+    self.options.maxPurgeLoadAttempts = getIntegerOrDefault(options.maxPurgeLoadAttempts, DEFAULT_PURGE_LOAD_ATTEMPTS);
     self.options.purgedFn = options.purgedFn;
-    self.options.maxInitOnPurge = getIntegerOrDefault(options.maxInitOnPurge, 10000);
-    self.options.initSampleSize = getIntegerOrDefault(options.initSampleSize, 10000);
     var metaOptions = {
-        keyPrefix: self.options.keyPrefix,
-        initSampleSize: self.options.initSampleSize,
-        keyQuerySize: self.options.keyQuerySize
+        keyPrefix: self.options.keyPrefix
     };
     self._storage = storageInterface;
     self._purgeComparator = options.purgeComparator || defaultPurgeComparator;
     self._revalidateFn = options.revalidateFn;
     self._parser = new Parser();
     self._meta = new Meta(self._storage, self._parser, metaOptions);
-    self._meta.init(function metaInitCallback () {
+    self._meta.init(self.options.scanSize, function metaInitCallback () {
         self._stats = new Stats(self._meta);
         self._enabled = true;
         callback && callback(null, self);
@@ -547,8 +544,9 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
             callback && callback();
             return;
         } else {
-            self.numItems(function getNumItemsCallback (err, size) {
-                if (size === 0) {
+            //check to see if there is at least 1 valid key
+            self.keys(1, function getKeysCallback (err, keysArr) {
+                if (keysArr.length === 0) {
                     // if numItems is 0, private mode is on or storage is disabled.
                     // callback with error and return
                     self._markAsDisabled();
@@ -557,7 +555,7 @@ StorageLRU.prototype.setItem = function (key, value, options, callback) {
                 }
                 // purge and save again
                 var spaceNeeded = serializedValue.length;
-                self.purge(spaceNeeded, false, function purgeCallback (err) {
+                self.purge(spaceNeeded, 0, function purgeCallback (err) {
                     if (err) {
                         // not enough space purged
                         callback && callback(cloneError(ERR_NOTENOUGHSPACE));
@@ -606,10 +604,10 @@ StorageLRU.prototype.removeItem = function (key, callback) {
 
 /**
  * @method numItems
- * @param {Number} Number of items in the underline storage.
+ * @return {Number} Number of items loaded from the underline storage.
  */
-StorageLRU.prototype.numItems = function (callback) {
-    return this._storage.getSize(callback);
+StorageLRU.prototype.numLoadedItems = function () {
+    return this._meta.records.length;
 };
 
 /**
@@ -750,7 +748,7 @@ StorageLRU.prototype._removeRecord = function (removeData, item, index, done) {
  * @param {Function} callback  
  * @param {Error} callback.error  if the space that we were able to purge was less than spaceNeeded.
  */
-StorageLRU.prototype.purge = function (spaceNeeded, forcePurge, callback) {
+StorageLRU.prototype.purge = function (spaceNeeded, purgeAttempts, callback) {
     var self = this;
     var factor = Math.max(0, self.options.purgeFactor) || 1;
     var padding = Math.round(spaceNeeded * factor);
@@ -764,14 +762,8 @@ StorageLRU.prototype.purge = function (spaceNeeded, forcePurge, callback) {
     var recordSize = records.length;
     
     //check to see if the meta information has been initialized for all objects
-    self.numItems(function numItemsCallback (err, currentSize) {
-        if (recordSize !== currentSize && !forcePurge) {
-            self._meta.init(self.options.maxInitOnPurge, function() {
-                //purge once we are ready
-                self.purge(spaceNeeded, true, callback);
-            });
-            return;
-        }
+    self.keys(self.options.scanSize, function keysCallback (err, keysArr) {
+        
         var removeData = {
             toBeRemoved: toBeRemoved,
             purged: purged,
@@ -803,6 +795,14 @@ StorageLRU.prototype.purge = function (spaceNeeded, forcePurge, callback) {
                 if (removeData.size <= padding) {
                     callback();
                 } else {
+                    // attempt to populate more meta-data from underlying storage and find space
+                    if (purgeAttempts < self.options.maxPurgeLoadAttempts) {
+                        self._meta.init(self.options.scanSize + (self.options.purgeLoadIncrease * purgeAttempts) , function purgeInitCallback () {
+                            // purge once we are ready
+                            self.purge(spaceNeeded, purgeAttempts + 1, callback);
+                        });
+                        return;
+                    }
                     callback(new Error('still need ' + (removeData.size - padding)));
                 }
             }
