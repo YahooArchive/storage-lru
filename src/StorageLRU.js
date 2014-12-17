@@ -183,6 +183,9 @@ Meta.prototype.remove = function (key) {
         }
     }
 };
+Meta.prototype.numRecords = function () {
+    return this.records.length;
+};
 Meta.prototype.du = function () {
     var size = 0;
     for (var i = 0, len = this.records.length; i < len; i++) {
@@ -600,14 +603,6 @@ StorageLRU.prototype.removeItem = function (key, callback) {
         self._meta.remove(key);
         callback && callback();
     }); 
-};
-
-/**
- * @method numItems
- * @return {Number} Number of items loaded from the underline storage.
- */
-StorageLRU.prototype.numLoadedItems = function () {
-    return this._meta.records.length;
 };
 
 /**
