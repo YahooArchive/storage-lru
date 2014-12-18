@@ -114,6 +114,7 @@ Meta.prototype.getMetaFromItem = function (key, item) {
 
 Meta.prototype.updateMetaRecord = function (key, callback) {
     var self = this;
+
     self.storage.getItem(key, function getItemCallback (err, item) {
         if (!err) {
             self.records.push(self.getMetaFromItem(key, item));
@@ -122,13 +123,23 @@ Meta.prototype.updateMetaRecord = function (key, callback) {
     });
 }
 
-Meta.prototype.init = function (scanSize, callback) {
+Meta.prototype.generateRecordsHash = function () {
+    var self = this;
+    var retval = {};
+    self.records.forEach(function recordsIterator (record) {
+        retval[record.key] = true;
+    });
+    return retval;
+}
+
+Meta.prototype.init = function (scanSize, currentRecords, callback) {
     // expensive operation
     // go through all items in storage, get meta data
     var self = this;
     var storage = self.storage;
     var keyPrefix = self.options.keyPrefix;
     var doneInserting = 0;
+    currentRecords = currentRecords || {};
     if (scanSize <= 0) {
         callback && callback();
         return;
@@ -141,9 +152,11 @@ Meta.prototype.init = function (scanSize, callback) {
             return;
         }
         keys.forEach(function keyIterator (key) {
-            if (!keyPrefix || key.indexOf(keyPrefix) === 0) {
+            // if the keyPrefix is different from the current options or we already have a record, ignore this key
+            if ((!keyPrefix || key.indexOf(keyPrefix) === 0) && !currentRecords[key]) {
                 self.updateMetaRecord(key, function updateMetaRecordCallback () {
                     doneInserting += 1;
+                    currentRecords[key] = true;
                     if (doneInserting === numKeys) {
                        callback && callback();
                     }
@@ -309,7 +322,7 @@ function StorageLRU (storageInterface, options) {
     self._revalidateFn = options.revalidateFn;
     self._parser = new Parser();
     self._meta = new Meta(self._storage, self._parser, metaOptions);
-    self._meta.init(self.options.scanSize, function metaInitCallback () {
+    self._meta.init(self.options.scanSize, {}, function metaInitCallback () {
         self._stats = new Stats(self._meta);
         self._enabled = true;
         callback && callback(null, self);
@@ -755,53 +768,55 @@ StorageLRU.prototype.purge = function (spaceNeeded, purgeAttempts, callback) {
 
     var records = self._meta.records;
     var recordSize = records.length;
-    
-    //check to see if the meta information has been initialized for all objects
-    self.keys(self.options.scanSize, function keysCallback (err, keysArr) {
         
-        var removeData = {
-            toBeRemoved: toBeRemoved,
-            purged: purged,
-            size: size,
-            recordSize: recordSize
-        };
+    var removeData = {
+        toBeRemoved: toBeRemoved,
+        purged: purged,
+        size: size,
+        recordSize: recordSize
+    };
 
-        eachAsync(records, self._removeRecord.bind(self, removeData), function done (ignore) {
-            //sort in descending order
-            toBeRemoved.sort(function toBeRemovedSorter (a,b) { 
-                return b - a; 
-            });
-            toBeRemoved.forEach(function toBeRemovedIterator (indexToRemove) {
-                records.splice(indexToRemove, 1); // remove the meta record
-            });
-            // invoke purgedFn if it is defined
-            var purgedCallback = self.options.purgedFn;
-            if (purgedCallback && purged.length > 0) {
-                // execute the purged callback asynchronously to prevent library users
-                // from potentially slow down the purge process by executing long tasks
-                // in this callback.
-                setTimeout(function purgeTimeout () {
-                    purgedCallback(purged);
-                }, 100);
-            }
-
-            // if enough space was made for spaceNeeded, consider purge as success
-            if (callback) {
-                if (removeData.size <= padding) {
-                    callback();
-                } else {
-                    // attempt to populate more meta-data from underlying storage and find space
-                    if (purgeAttempts < self.options.maxPurgeLoadAttempts) {
-                        self._meta.init(self.options.scanSize + (self.options.purgeLoadIncrease * purgeAttempts) , function purgeInitCallback () {
-                            // purge once we are ready
-                            self.purge(spaceNeeded, purgeAttempts + 1, callback);
-                        });
-                        return;
-                    }
-                    callback(new Error('still need ' + (removeData.size - padding)));
-                }
-            }
+    eachAsync(records, self._removeRecord.bind(self, removeData), function done (ignore) {
+        //sort in descending order
+        toBeRemoved.sort(function toBeRemovedSorter (a,b) { 
+            return b - a; 
         });
+        toBeRemoved.forEach(function toBeRemovedIterator (indexToRemove) {
+            records.splice(indexToRemove, 1); // remove the meta record
+        });
+        // invoke purgedFn if it is defined
+        var purgedCallback = self.options.purgedFn;
+        if (purgedCallback && purged.length > 0) {
+            // execute the purged callback asynchronously to prevent library users
+            // from potentially slow down the purge process by executing long tasks
+            // in this callback.
+            setTimeout(function purgeTimeout () {
+                purgedCallback(purged);
+            }, 100);
+        }
+
+        if (removeData.size > padding && self.options.maxPurgeLoadAttempts > purgeAttempts) {
+            // attempt to populate more meta-data from underlying storage and find space
+            // generate the records hash if it hasn't been already.
+            self._meta.recordsHash = self._meta.recordsHash || self._meta.generateRecordsHash();
+            self._meta.init(
+                self.options.scanSize + (self.options.purgeLoadIncrease * purgeAttempts),
+                self._meta.recordsHash, 
+                function purgeInitCallback () {
+                    // purge once we are ready
+                    self.purge(spaceNeeded, purgeAttempts + 1, callback);
+                });
+            return;
+        }
+        self._meta.recordsHash = null;
+        // if enough space was made for spaceNeeded, consider purge as success
+        if (callback) {
+            if (removeData.size <= padding) {
+                callback();
+            } else {
+                callback(new Error('still need ' + (removeData.size - padding)));
+            }
+        }
     });
 };
 
