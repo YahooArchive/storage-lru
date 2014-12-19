@@ -132,14 +132,13 @@ Meta.prototype.generateRecordsHash = function () {
     return retval;
 }
 
-Meta.prototype.init = function (scanSize, currentRecords, callback) {
+Meta.prototype.init = function (scanSize, callback) {
     // expensive operation
     // go through all items in storage, get meta data
     var self = this;
     var storage = self.storage;
     var keyPrefix = self.options.keyPrefix;
     var doneInserting = 0;
-    currentRecords = currentRecords || {};
     if (scanSize <= 0) {
         callback && callback();
         return;
@@ -151,12 +150,14 @@ Meta.prototype.init = function (scanSize, currentRecords, callback) {
             callback && callback();
             return;
         }
+        // generate the records hash
+        var recordsHash = self.generateRecordsHash();
         keys.forEach(function keyIterator (key) {
             // if the keyPrefix is different from the current options or we already have a record, ignore this key
-            if (!currentRecords[key] && (!keyPrefix || key.indexOf(keyPrefix) === 0)) {
+            if (!recordsHash[key] && (!keyPrefix || key.indexOf(keyPrefix) === 0)) {
                 self.updateMetaRecord(key, function updateMetaRecordCallback () {
                     doneInserting += 1;
-                    currentRecords[key] = true;
+                    recordsHash[key] = true;
                     if (doneInserting === numKeys) {
                        callback && callback();
                     }
@@ -322,7 +323,7 @@ function StorageLRU (storageInterface, options) {
     self._revalidateFn = options.revalidateFn;
     self._parser = new Parser();
     self._meta = new Meta(self._storage, self._parser, metaOptions);
-    self._meta.init(self.options.scanSize, {}, function metaInitCallback () {
+    self._meta.init(self.options.scanSize, function metaInitCallback () {
         self._stats = new Stats(self._meta);
         self._enabled = true;
         callback && callback(null, self);
@@ -797,18 +798,14 @@ StorageLRU.prototype.purge = function (spaceNeeded, purgeAttempts, callback) {
 
         if (removeData.size > padding && self.options.maxPurgeLoadAttempts > purgeAttempts) {
             // attempt to populate more meta-data from underlying storage and find space
-            // generate the records hash if it hasn't been already.
-            self._meta.recordsHash = self._meta.recordsHash || self._meta.generateRecordsHash();
             self._meta.init(
                 self.options.scanSize + (self.options.purgeLoadIncrease * purgeAttempts),
-                self._meta.recordsHash, 
                 function purgeInitCallback () {
                     // purge once we are ready
                     self.purge(spaceNeeded, purgeAttempts + 1, callback);
                 });
             return;
         }
-        self._meta.recordsHash = null;
         // if enough space was made for spaceNeeded, consider purge as success
         if (callback) {
             if (removeData.size <= padding) {
