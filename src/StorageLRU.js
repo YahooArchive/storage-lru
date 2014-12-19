@@ -153,7 +153,7 @@ Meta.prototype.init = function (scanSize, currentRecords, callback) {
         }
         keys.forEach(function keyIterator (key) {
             // if the keyPrefix is different from the current options or we already have a record, ignore this key
-            if ((!keyPrefix || key.indexOf(keyPrefix) === 0) && !currentRecords[key]) {
+            if (!currentRecords[key] && (!keyPrefix || key.indexOf(keyPrefix) === 0)) {
                 self.updateMetaRecord(key, function updateMetaRecordCallback () {
                     doneInserting += 1;
                     currentRecords[key] = true;

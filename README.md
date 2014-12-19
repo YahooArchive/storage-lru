@@ -118,6 +118,22 @@ var lru = new StorageLRU(localStorage, {
 });
 ```
 
+### Configurable Purge Attempts
+In addition to how much extra space to purge, you can also configure how many items to retrieve from underlying storage in the event that purge is unable to find enough free space.  By providing a `maxPurgeLoadAttempts` param you can set how many times purge will attempt to load more keys to free up space (since purge will then be able to remove the newly loaded items from underlying storage).  Each attempt will increase the number of keys looked up by the 'purgeLoadIncrease' param.  Each param should be a positive integer.
+
+```js
+var lru = new StorageLRU(localStorage, {
+    // maxPurgeLoadAttempts controls the number of times to try and load additional keys
+    // when purge cannot reclaim enough space.
+    maxPurgeLoadAttempts: 3,
+    // purgeLoadIncrease controls the number of additional keys to look up during each 
+    // successive purge attempt.
+    // E.g. if this is the second additional purge attempt, StorageLRU will attempt to load
+    //      (initialScanSize + 2 * 500) keys.
+    purgeLoadIncrease: 500
+});
+```
+
 ### Purge Notification
 If you want to be notified when items get purged from the storage, you can register a callback function when creating the StorageLRU instance.
 
