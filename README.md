@@ -262,6 +262,7 @@ var stats = lru.stats({du: true});
 This library requires the following Polyfill:
 
 * JSON - See [Modernizr Polyfill Doc](https://github.com/Modernizr/Modernizr/wiki/HTML5-Cross-browser-Polyfills#ecmascript-5) for available JSON polyfills.
+* Array.prototype.filter - See [Modernizer Polyfill Doc](https://github.com/Modernizr/Modernizr/wiki/HTML5-Cross-browser-Polyfills#ecmascript-5) for available `Array.prototype` polyfills.
 
 
 ## License
