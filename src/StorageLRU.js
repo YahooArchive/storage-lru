@@ -201,16 +201,6 @@ Meta.prototype.remove = function (key) {
 Meta.prototype.numRecords = function () {
     return this.records.length;
 };
-Meta.prototype.du = function () {
-    var size = 0;
-    for (var i = 0, len = this.records.length; i < len; i++) {
-        size += this.records[i].size;
-    }
-    return {
-        count: this.records.length,
-        size: size
-    };
-};
 
 function Parser () {}
 Parser.prototype.format = function (meta, value) {
@@ -257,7 +247,7 @@ function Stats (meta) {
     this.revalidateSuccess = 0;
     this.revalidateFailure = 0;
 }
-Stats.prototype.toJSON = function (options) {
+Stats.prototype.toJSON = function () {
     var stats = {
         hit: this.hit,
         miss: this.miss,
@@ -322,18 +312,15 @@ function StorageLRU (storageInterface, options) {
 /**
  * Reports statistics information.
  * @method stats
- * @param {Object} options
- * @param {Boolean} [options.du=false]  Whether to include disk usage data.
  * @return {Object} statistics information, including:
  *   - hit: Number of cache hits
  *   - miss: Number of cache misses
  *   - error: Number of errors occurred during getItem
  *   - stale: Number of occurrances where stale items were returned (cache hit with data that
  *            expired but still within stale-while-revalidate window)
- *   - du: Disk usage (total item count and characters used), if options.du=true
  */
-StorageLRU.prototype.stats = function (options) {
-    return this._stats.toJSON(options);
+StorageLRU.prototype.stats = function () {
+    return this._stats.toJSON();
 };
 
 /**
