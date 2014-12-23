@@ -7,7 +7,11 @@ StorageLRU is a LRU implementation that can be used with local storage, or other
 ## Features
 
 ### Pluggable Underline Storage
-You can use your own storage of choice with StorageLRU, as long as it conforms to an asyncronous version of the localStorage API (if your storage solution is syncronous, see below).  Specifically, it should provide the following interface:
+You can use your own storage of choice with StorageLRU, as long as it conforms to an asyncronous API.
+
+For syncronous storage solutions (such as html5 localStorage), we also provide  the `asyncify` util, which simply wraps your syncronous storage object inside an asyncronous interface.
+
+Following is the async API details:
 ```js
 getItem : function (key, callback) - get the item with the associated key;
 setItem : function (key, item, callback) - set an item to the passed in key;
@@ -16,19 +20,18 @@ keys : function (num, callback) - get `num` number of keys of items stored;
 ```
 Note that your storage should return 'null' or 'undefined' when a requested key does not exist.
 
+Examples:
+
 ```js
+// Example 1: async storage
 var StorageLRU = require('storage-lru').StorageLRU;
-var lru = new StorageLRU(localStorage);
-```
+// var myAsyncStorage = ...;
+var lru = new StorageLRU(myAsyncStorage);
 
-### Asyncify syncronous storage
-Storage-lru requires an asyncronous storage interface so that it will work with async solutions such as memcache.  However, for syncronous storage solutions (such as html5 localStorage) the asyncify library is available.  Asyncify simply wraps your syncronous storage object inside an asyncronous interface.
-
-```js
+// Example 2: localStorage
 var StorageLRU = require('storage-lru').StorageLRU;
 var asyncify = require('storage-lru').asyncify;
-var asyncStorage = asyncify(mySyncronousStorage);
-var lru = new StorageLRU(asyncStorage);
+var lru = new StorageLRU(asyncify(localStorage));
 ```
 
 ### Max-Age and Stale-While-Revalidate
@@ -43,7 +46,8 @@ The revalidate success/failure count will be recorded in [the Stats](#stats).
 Example:
 ```js
 var StorageLRU = require('storage-lru').StorageLRU;
-var lru = new StorageLRU(localStorage);
+var asyncify = require('storage-lru').asyncify;
+var lru = new StorageLRU(asyncify(localStorage));
 // Saving item 'fooJSON', which expires in 5 minutes and has a stale-while-revalidate time window of 1 day after expiration.
 lru.setItem(
     'fooJSON',    // key
@@ -80,7 +84,8 @@ When you save an item to StorageLRU, you can assign a priority.  Lower priority 
 Example:
 ```js
 var StorageLRU = require('storage-lru').StorageLRU;
-var lru = new StorageLRU(localStorage);
+var asyncify = require('storage-lru').asyncify;
+var lru = new StorageLRU(asyncify(localStorage));
 lru.setItem('fooJSON', {foo: 'bar'}, {json: true, priority: 1}, function (err) {
     if (err) {
         // something went wrong. Item not saved.
@@ -106,7 +111,8 @@ You can replace the default purging algorithm with your own, by specifying a pur
 
 ```js
 var StorageLRU = require('storage-lru').StorageLRU;
-var lru = new StorageLRU(localStorage, {
+var asyncify = require('storage-lru').asyncify;
+var lru = new StorageLRU(asyncify(localStorage), {
     // always purge the largest item first
     purgeComparator: function (meta1, meta2) {
         if (meta1.size > meta2.size) {
@@ -125,7 +131,8 @@ You can configure how much extra space to purge, by providing a `purgeFactor` pa
 
 ```js
 var StorageLRU = require('storage-lru').StorageLRU;
-var lru = new StorageLRU(localStorage, {
+var asyncify = require('storage-lru').asyncify;
+var lru = new StorageLRU(asyncify(localStorage), {
     // purgeFactor controls amount of extra space to purge.
     // E.g. if space needed for a new item is 1000 characters, StorageLRU will actually
     //      try to purge (1000 + 1000 * purgeFactor) characters.
@@ -134,18 +141,19 @@ var lru = new StorageLRU(localStorage, {
 ```
 
 ### Configurable Purge Attempts
-In addition to how much extra space to purge, you can also configure how many items to retrieve from underlying storage in the event that purge is unable to find enough free space.  By providing a `maxPurgeLoadAttempts` param you can set how many times purge will attempt to load more keys to free up space (since purge will then be able to remove the newly loaded items from underlying storage).  Each attempt will increase the number of keys looked up by the `purgeLoadIncrease` param.  Each param should be a positive integer.
+In addition to how much extra space to purge, you can also configure how many items to retrieve from underlying storage in the event that purge is unable to find enough free space.  By providing a `maxPurgeAttempts` param you can set how many times purge will attempt to free up space.  Each attempt will increase the number of keys looked up by the `purgeLoadIncrease` param.
 
 ```js
 var StorageLRU = require('storage-lru').StorageLRU;
-var lru = new StorageLRU(localStorage, {
-    // maxPurgeLoadAttempts controls the number of times to try and load additional keys
-    // when purge cannot reclaim enough space.
-    maxPurgeLoadAttempts: 3,
+var asyncify = require('storage-lru').asyncify;
+var lru = new StorageLRU(asyncify(localStorage), {
+    // maxPurgeAttempts controls the number of times to try purging,
+    // each attempt will look through more items.
+    maxPurgeAttempts: 3,
     // purgeLoadIncrease controls the number of additional keys to look up during each 
     // successive purge attempt.
     // E.g. if this is the second additional purge attempt, StorageLRU will attempt to load
-    //      (initialScanSize + 2 * 500) keys.
+    //      (2 * 500) keys.
     purgeLoadIncrease: 500
 });
 ```
@@ -155,7 +163,8 @@ If you want to be notified when items get purged from the storage, you can regis
 
 ```js
 var StorageLRU = require('storage-lru').StorageLRU;
-var lru = new StorageLRU(localStorage, {
+var asyncify = require('storage-lru').asyncify;
+var lru = new StorageLRU(asyncify(localStorage), {
     // purgeFactor controls amount of extra space to purge.
     // E.g. if space needed for a new item is 1000 characters, StorageLRU will actually
     //      try to purge (1000 + 1000 * purgeFactor) characters.
@@ -182,17 +191,10 @@ Currently stats data collected include the following:
 | error | Number of errors occurred during getItem |
 | revalidateSuccess | Success count for revalidating a stale item, if `revalidateFn` is provided when the StorageLRU instance is instantiated. |
 | revalidateFailure | Failure count for revalidating a stale item, if `revalidateFn` is provided when the StorageLRU instance is instantiated. |
-| du | Disk usage: item count and total character size used. This will only be included if `options.du` is true. |
 
 Example:
 ```js
-var stats;
-
-// does not include du info
-stats = lru.stats();
-
-// output du info
-stats = lru.stats({du: true});
+var stats = lru.stats();
 ```
 
 
@@ -200,7 +202,9 @@ stats = lru.stats({du: true});
 
 ```js
 var StorageLRU = require('storage-lru').StorageLRU;
-var lru = new StorageLRU(localStorage, {
+var asyncify = require('storage-lru').asyncify;
+
+var lru = new StorageLRU(asyncify(localStorage), {
     purgeFactor: 0.5,  // this controls amount of extra space to purge.
     purgedFn: function (purgedKeys) {
         console.log('These keys were purged:', purgedKeys);
