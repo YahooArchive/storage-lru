@@ -20,7 +20,7 @@ var DEFAULT_PURGE_LOAD_INCREASE = 500;
 var DEFAULT_PURGE_ATTEMPTS = 2;
 var CUR_VERSION = '1';
 
-var async = require('async');
+var asyncEachSeries = require('async-each-series');
 require('setimmediate');
 
  
@@ -718,6 +718,8 @@ StorageLRU.prototype.purge = function (spaceNeeded, callback) {
     var padding = Math.round(spaceNeeded * factor);
 
     var removeData = {
+        purged: [],
+        recordsToRemove: [],
         size: spaceNeeded + padding
     };
 
@@ -726,13 +728,13 @@ StorageLRU.prototype.purge = function (spaceNeeded, callback) {
         attempts.push((i + 1) * self.options.purgeLoadIncrease);
     }
 
-    async.mapSeries(attempts, function purgeAttempt(loadSize, attemptDone) {
+    asyncEachSeries(attempts, function purgeAttempt(loadSize, attemptDone) {
         removeData.recordsToRemove = [];
         removeData.purged = [];
 
         self._meta.init(loadSize, function doneInit() {
             self._meta.sort(self._purgeComparator);
-            async.mapSeries(self._meta.records, function removeItem(record, cb) {
+            asyncEachSeries(self._meta.records, function removeItem(record, cb) {
                 // mark record to remove, to remove in batch later for performance
                 record.remove = true;
                 removeData.purged.push(self._deprefix(record.key)); // record purged key
@@ -749,7 +751,7 @@ StorageLRU.prototype.purge = function (spaceNeeded, callback) {
                 });
             }, function itemsRemoved(ignore) {
                 // remove records that were marked to remove
-                self._meta.records = self._meta.records.filter(function (record) {
+                self._meta.records = self._meta.records.filter(function shouldKeepRecord(record) {
                     return record.remove !== true;
                 });
 
