@@ -241,7 +241,7 @@ lru.removeItem('foo', function (err) {
     }
 });
 
-var stats = lru.stats({du: true});
+var stats = lru.stats();
 ```
 
 ## Error Codes
