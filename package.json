@@ -20,7 +20,8 @@
     }
   ],
   "dependencies": {
-    "each-async": "^1.1.0"
+    "async-each-series": "^0.1.1",
+    "setimmediate": "^1.0.2"
   },
   "devDependencies": {
     "chai": "^1.9.1",
