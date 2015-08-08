@@ -47,7 +47,15 @@ Example:
 ```js
 var StorageLRU = require('storage-lru').StorageLRU;
 var asyncify = require('storage-lru').asyncify;
-var lru = new StorageLRU(asyncify(localStorage));
+// Creating a StorageLRU instance with an item revalidation function
+var lru = new StorageLRU(
+    asyncify(localStorage), 
+    {
+        revalidateFn: function(key, callback) {
+            var newValue = someFunctionToRefetchFromSomewhere(key); // most likely be async
+            callback(null, newValue); // make sure callback is invoked
+        }
+    });
 // Saving item 'fooJSON', which expires in 5 minutes and has a stale-while-revalidate time window of 1 day after expiration.
 lru.setItem(
     'fooJSON',    // key
@@ -56,11 +64,7 @@ lru.setItem(
     },
     {             // options
         json: true,
-        cacheControl:'max-age=300,stale-while-revalidate=86400',
-        revalidateFn: function(key, callback) {
-            var newValue = someFunctionToRefetchFromSomewhere(key); // most likely be async
-            callback(null, newValue); // make sure callback is invoked
-        }
+        cacheControl:'max-age=300,stale-while-revalidate=86400'
     }, function (err) {
         if (err) {
             // something went wrong. Item not saved.
